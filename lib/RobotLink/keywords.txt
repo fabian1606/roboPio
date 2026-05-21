@@ -1,0 +1,45 @@
+#######################################
+# Syntax Coloring Map For RobotLink
+# (Trennzeichen sind Tabs, keine Leerzeichen)
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+RobotLink	KEYWORD1
+CoordMode	KEYWORD1
+KinematicsConfig	KEYWORD1
+JointLimits	KEYWORD1
+RobotFrame	KEYWORD1
+WristMode	KEYWORD1
+RobotFrameCallback	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+beginSender	KEYWORD2
+beginReceiver	KEYWORD2
+setCoordMode	KEYWORD2
+setAxisSmoothing	KEYWORD2
+setAxisValue	KEYWORD2
+sendAllAxes	KEYWORD2
+update	KEYWORD2
+setKinematics	KEYWORD2
+setMode	KEYWORD2
+getMode	KEYWORD2
+setModeLED	KEYWORD2
+flashAttention	KEYWORD2
+robotFramePack	KEYWORD2
+robotFrameUnpack	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+COORD_DIRECT	LITERAL1
+COORD_CYLINDRICAL	LITERAL1
+WRIST_PARALLEL_GAMMA	LITERAL1
+WRIST_HORIZONTAL	LITERAL1
+robotLink	LITERAL1

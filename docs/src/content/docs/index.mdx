@@ -1,0 +1,97 @@
+---
+title: roboPio
+draft: false
+description: 6-Achsen-Roboterarm mit kabelloser Steuerung via ESP-NOW – Übersicht und Dokumentation.
+template: splash
+hero:
+  title: roboPio
+  tagline: 6-Achsen-Roboterarm mit kabelloser Steuerung via ESP-NOW
+  actions:
+    - text: Installation
+      link: /installation/
+      icon: right-arrow
+      variant: primary
+    - text: Modi ansehen
+      link: /modes/direkt/
+      icon: right-arrow
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Was ist roboPio?
+
+**roboPio** ist ein 6-Achsen-Roboterarm, der über zwei ESP32-Mikrocontroller kabellos gesteuert wird:
+
+- **Sender (ESP32-S3):** Liest sechs Potentiometer aus und überträgt die Achswerte per ESP-NOW an den Empfänger.
+- **Empfänger (ESP32):** Empfängt die Daten und steuert sechs Servomotoren. Je nach Koordinatenmodus berechnet er bei Bedarf inverse Kinematik.
+
+Die Kommunikation erfolgt über das **ESP-NOW**-Protokoll – ein verbindungsloses, bidirektionales WLAN-Protokoll von Espressif, das sehr geringe Latenz bietet und ohne Router auskommt.
+
+Die gesamte Kommunikationslogik ist in der **RobotLink**-Bibliothek gekapselt, die als Arduino-ZIP-Bibliothek bereitgestellt wird.
+
+---
+
+## Ansteuerungsmodi
+
+roboPio unterstützt drei verschiedene Koordinatenmodi. Der aktive Modus wird beim Start automatisch aus dem EEPROM geladen und per LED-Farbe angezeigt.
+
+<CardGrid>
+  <Card title="Direkt-Modus" icon="pencil">
+    Jedes Potentiometer steuert direkt einen Servo (1:1-Zuordnung). Keine inverse Kinematik. Ideal zum Testen einzelner Gelenke.
+
+    [Zum Direkt-Modus →](/modes/direkt/)
+  </Card>
+  <Card title="Zylindrisch-Modus" icon="setting">
+    Steuerung in zylindrischen Koordinaten: Basiswinkel, Elevation und Reichweite. Der Empfänger berechnet automatisch die inverse Kinematik.
+
+    [Zum Zylindrisch-Modus →](/modes/zylindrisch/)
+  </Card>
+  <Card title="Kartesisch-Modus" icon="puzzle">
+    Steuerung des Werkzeugmittelpunkts in 3D-Raumkoordinaten (X, Y, Z). Vollständige 3D-Inverse-Kinematik im Empfänger.
+
+    [Zum Kartesisch-Modus →](/modes/kartesisch/)
+  </Card>
+</CardGrid>
+
+---
+
+## LED-Anzeige
+
+Die integrierte WS2812B-RGB-LED zeigt den aktuellen Modus durch ihre Farbe an:
+
+| Modus | Farbe | Beschreibung |
+|-------|-------|--------------|
+| 1 | Weiß | Direkt-Modus (COORD_DIRECT) |
+| 2 | Rot | Zylindrisch-Modus (COORD_CYLINDRICAL) |
+| 3 | Grün | Kartesisch-Modus (COORD_CARTESIAN) |
+| 4 | Blau | Modus 4 (reserviert) |
+| 5 | Magenta | Modus 5 (reserviert) |
+
+---
+
+## Moduswechsel
+
+Der aktive Modus wird im EEPROM des ESP32-S3 gespeichert und bleibt nach dem Aus- und Einschalten erhalten.
+
+**Zum Wechseln des Modus:**
+
+1. ESP32-S3 **kurz zurücksetzen** (Reset-Taste drücken und loslassen).
+2. Innerhalb von **400 ms** erneut zurücksetzen.
+
+Bei einem Doppel-Reset innerhalb dieses Zeitfensters wird der Modus um eins weitergeschaltet:
+
+```
+1 (Weiß) → 2 (Rot) → 3 (Grün) → 4 (Blau) → 5 (Magenta) → 1 (Weiß) → …
+```
+
+Die neue Modusfarbe leuchtet kurz auf, bevor der Betrieb im neuen Modus beginnt.
+
+---
+
+## Schnellstart
+
+<LinkCard
+  title="Installation"
+  description="Bibliotheken einrichten, Board-Einstellungen konfigurieren und das erste Beispiel hochladen."
+  href="/installation/"
+/>

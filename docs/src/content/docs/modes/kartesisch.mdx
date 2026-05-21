@@ -1,0 +1,155 @@
+---
+title: Kartesisch-Modus
+draft: false
+description: Modus 3 – Kartesische Koordinaten (COORD_CARTESIAN). Steuerung der Werkzeugspitze in 3D-Raumkoordinaten mit vollständiger inverser Kinematik.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+import WokwiCircuit from '../../../components/WokwiCircuit.astro';
+
+<Badge text="Modus 3" variant="default" /> <Badge text="LED: Grün" variant="success" />
+
+## Übersicht
+
+Im **Kartesisch-Modus** (`COORD_CARTESIAN`) wird die Position der **Werkzeugspitze** direkt im dreidimensionalen Raum vorgegeben. Die drei Potentiometer für X, Y und Z verschieben den Werkzeugmittelpunkt entlang der entsprechenden Achse; zwei weitere Regler steuern die Werkzeugausrichtung und die Greiferzange.
+
+Der Empfänger berechnet in Echtzeit alle sechs Gelenkwinkel mithilfe eines **vollständigen 3D-Inverse-Kinematik-Lösers**.
+
+Dieser Modus eignet sich für:
+
+- **Präzisionsaufgaben**, bei denen der Endpunkt wichtiger ist als der Weg
+- **Zusammenarbeit mit CNC- oder CAM-Planung** (Werkzeugpfade in kartesischen Koordinaten)
+- **Pädagogische Zwecke** – intuitives Verstehen von Roboter-Arbeitsräumen
+
+---
+
+## Achsenbelegung
+
+| Achse | GPIO | Funktion | Wertebereich |
+|-------|------|----------|--------------|
+| 0 | 4 | X-Position (vor/zurück) | 50 – 350 mm |
+| 1 | 7 | Y-Position (links/rechts) | -200 – +200 mm |
+| 2 | 6 | Z-Position (oben/unten) | -100 – +300 mm |
+| 3 | 5 | Werkzeug-Neigung η | -90° – +90° |
+| 4 | 15 | Handgelenk-Rotation | 0° – 360° |
+| 5 | 16 | Greifer | 0 – 100 % |
+
+---
+
+## Koordinatensystem
+
+Das Koordinatensystem ist wie folgt definiert:
+
+- **Ursprung** – Mittelpunkt der Basisdrehachse auf Tischhöhe
+- **X-Achse** – Vorwärtsrichtung des Arms in seiner Grundstellung
+- **Y-Achse** – seitliche Richtung (links = negativ, rechts = positiv)
+- **Z-Achse** – vertikale Richtung (oben = positiv)
+
+---
+
+## Schaltplan
+
+<WokwiCircuit
+  title="Kartesisch-Modus – 6 Potentiometer am ESP32-S3"
+  pins={[
+    { gpio: 4,  label: 'X-Position' },
+    { gpio: 7,  label: 'Y-Position' },
+    { gpio: 6,  label: 'Z-Position' },
+    { gpio: 5,  label: 'Werkzeug-Neigung' },
+    { gpio: 15, label: 'HG-Rotation' },
+    { gpio: 16, label: 'Greifer' },
+  ]}
+/>
+
+---
+
+## Beispielcode
+
+```cpp
+#include <RobotLink.h>
+
+// GPIO-Pins für die Potentiometer
+// Belegung: X, Y, Z, Werkzeug-Neigung, HG-Rotation, Greifer
+const uint8_t AXIS_PINS[6] = { 4, 7, 6, 5, 15, 16 };
+
+// Glättungswerte pro Achse (0 = deaktiviert)
+const uint8_t SMOOTHING[6] = { 10, 10, 10, 10, 10, 10 };
+
+void setup() {
+  // Glättungsfilter für ruhige Bewegung initialisieren
+  for (int i = 0; i < 6; i++) {
+    if (SMOOTHING[i] > 0) {
+      robotLink.setAxisSmoothing(i, SMOOTHING[i]);
+    }
+  }
+
+  // Kartesischen Koordinatenmodus aktivieren
+  robotLink.setCoordMode(COORD_CARTESIAN);
+
+  // Sender starten (Modus wird im EEPROM gespeichert)
+  robotLink.beginSender();
+}
+
+void loop() {
+  // Interne Aktualisierung (Glättung, Zeitgebung, ESP-NOW-Callbacks)
+  robotLink.update();
+
+  // Alle Potentiometer auslesen und als Achswerte setzen
+  for (int i = 0; i < 6; i++) {
+    robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
+  }
+
+  // Achswerte per ESP-NOW an den Empfänger übermitteln
+  robotLink.sendAllAxes();
+
+  // 20 ms Pause → ca. 50 Hz Steuerrate
+  delay(20);
+}
+```
+
+---
+
+## Funktionsweise der 3D-inversen Kinematik
+
+### Schritt 1 – Basiswinkel
+
+Der Basiswinkel ergibt sich direkt aus den X- und Y-Koordinaten:
+
+```
+ψ = atan2(Y, X)
+```
+
+### Schritt 2 – Planare Reichweite
+
+Der horizontale Abstand von der Basis zur Werkzeugspitze (minus Handgelenksverlängerung L3):
+
+```
+r_eff = sqrt(X² + Y²) - L3 · cos(η)
+z_eff = Z - L3 · sin(η)
+```
+
+### Schritt 3 – 2-Gelenk-Löser in der Sagittalebene
+
+Identisch zum zylindrischen Modus wird der Cosinus-Satz angewandt, um Schulter- und Ellbogenwinkel zu berechnen:
+
+```
+d = sqrt(r_eff² + z_eff²)
+cos(θ_Ellbogen) = (d² - L1² - L2²) / (2 · L1 · L2)
+θ_Schulter     = atan2(z_eff, r_eff) - atan2(L2 · sin(θ_Ellbogen), L1 + L2 · cos(θ_Ellbogen))
+```
+
+### Schritt 4 – Handgelenk-Kompensation
+
+Der Handgelenk-Neigungswinkel kompensiert Schulter- und Ellbogenwinkel, damit das Werkzeug die gewünschte absolute Neigung η beibehält:
+
+```
+θ_Handgelenk = η - θ_Schulter - θ_Ellbogen
+```
+
+<Aside type="caution">
+  **Singuläre Positionen:** Direkt über der Basis (X ≈ 0, Y ≈ 0) und am maximalen Ausstreckpunkt kann die IK numerisch instabil werden. In diesen Bereichen können abrupte Bewegungen auftreten. Es empfiehlt sich, diese Positionen im praktischen Betrieb zu vermeiden.
+</Aside>
+
+<Aside type="tip">
+  Der kartesische Modus reagiert empfindlicher auf schnelle Potentiometer-Bewegungen als der Direkt-Modus, da kleine Wertänderungen große Gelenkwinkeländerungen auslösen können. Höhere Glättungswerte (z. B. 15–20) führen zu ruhigeren Bewegungen.
+</Aside>

@@ -1,0 +1,152 @@
+---
+title: Zylindrisch-Modus
+draft: false
+description: Modus 2 – Zylindrische Koordinaten (COORD_CYLINDRICAL). Steuerung per Basiswinkel, Elevation und Reichweite mit automatischer inverser Kinematik.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+import WokwiCircuit from '../../../components/WokwiCircuit.astro';
+
+<Badge text="Modus 2" variant="default" /> <Badge text="LED: Rot" variant="danger" />
+
+## Übersicht
+
+Im **Zylindrisch-Modus** (`COORD_CYLINDRICAL`) wird der Roboterarm in **zylindrischen Koordinaten** gesteuert. Anstatt einzelne Gelenke direkt anzusteuern, gibt der Bediener folgende Parameter vor:
+
+- **Basiswinkel ψ** – Rotation der gesamten Armstruktur um die vertikale Achse
+- **Elevation γ** – Neigungswinkel des Arms nach oben/unten
+- **Reichweite l** – horizontale Streckung des Arms (Abstand Basis–Werkzeug)
+- **Handgelenk-Rotation θ** – Drehung des Werkzeugs um seine eigene Achse
+
+Der Empfänger berechnet automatisch die benötigten Gelenkwinkel für Schulter und Ellbogen mittels eines **2-Gelenk-IK-Lösers**.
+
+---
+
+## Achsenbelegung
+
+| Achse | GPIO | Funktion | Wertebereich |
+|-------|------|----------|--------------|
+| 0 | 4 | Basis-Rotation ψ | 0° – 360° |
+| 1 | 7 | Elevation γ | 0° – 80° |
+| 2 | 6 | Reichweite l | 40 – 240 mm |
+| 3 | 5 | Handgelenk-Rotation θ | 0° – 360° |
+| 4 | 15 | — (nicht verwendet) | — |
+| 5 | 16 | Greifer | 0 – 100 % |
+
+---
+
+## Arm-Geometrie
+
+Der 2-Gelenk-IK-Löser des Empfängers verwendet folgende Längenmaße:
+
+| Segment | Länge | Beschreibung |
+|---------|-------|--------------|
+| L1 | 115 mm | Oberarm (Schulter → Ellbogen) |
+| L2 | 135 mm | Unterarm (Ellbogen → Handgelenk) |
+| L3 | 165 mm | Handgelenksverlängerung (Handgelenk → Werkzeugspitze) |
+
+Der maximale Arm-Radius beträgt L1 + L2 + L3 = **415 mm**. Die praktisch sinnvolle Reichweite ist auf 240 mm begrenzt, um Singularitäten zu vermeiden.
+
+---
+
+## Handgelenk-Modi
+
+Der Empfänger unterstützt zwei Handgelenk-Verhaltensweisen, die in der Receiver-Firmware konfiguriert werden:
+
+| Modus | Konstante | Beschreibung |
+|-------|-----------|--------------|
+| Parallel zur Elevation | `WRIST_PARALLEL_GAMMA` | Das Handgelenk folgt dem Elevationswinkel – die Werkzeugachse bleibt parallel zur Armlinie. |
+| Waagerecht | `WRIST_HORIZONTAL` | Das Handgelenk kompensiert die Elevation und bleibt immer horizontal (z. B. für Greifaufgaben auf einer Arbeitsfläche). |
+
+---
+
+## Schaltplan
+
+<WokwiCircuit
+  title="Zylindrisch-Modus – 6 Potentiometer am ESP32-S3"
+  pins={[
+    { gpio: 4,  label: 'Basis ψ' },
+    { gpio: 7,  label: 'Elevation γ' },
+    { gpio: 6,  label: 'Reichweite l' },
+    { gpio: 5,  label: 'HG-Rotation θ' },
+    { gpio: 15, label: '(nicht belegt)' },
+    { gpio: 16, label: 'Greifer' },
+  ]}
+/>
+
+<Aside type="note">
+  GPIO 15 (Achse 4) ist in diesem Modus nicht belegt. Das zugehörige Potentiometer kann trotzdem angeschlossen sein, der Wert wird vom Empfänger ignoriert.
+</Aside>
+
+---
+
+## Beispielcode
+
+```cpp
+#include <RobotLink.h>
+
+// GPIO-Pins für die Potentiometer
+// Belegung: Basis, Elevation, Reichweite, HG-Rotation, (frei), Greifer
+const uint8_t AXIS_PINS[6] = { 4, 7, 6, 5, 15, 16 };
+
+// Glättungswerte pro Achse (0 = deaktiviert)
+const uint8_t SMOOTHING[6] = { 10, 10, 10, 10, 0, 10 };
+
+void setup() {
+  // Glättungsfilter initialisieren
+  for (int i = 0; i < 6; i++) {
+    if (SMOOTHING[i] > 0) {
+      robotLink.setAxisSmoothing(i, SMOOTHING[i]);
+    }
+  }
+
+  // Zylindrischen Koordinatenmodus aktivieren
+  robotLink.setCoordMode(COORD_CYLINDRICAL);
+
+  // Sender starten (speichert Modus im EEPROM)
+  robotLink.beginSender();
+}
+
+void loop() {
+  // Interne Aktualisierung (Glättung, Zeitgebung)
+  robotLink.update();
+
+  // Potentiometer auslesen und Achswerte setzen
+  for (int i = 0; i < 6; i++) {
+    robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
+  }
+
+  // Alle Achswerte per ESP-NOW senden
+  robotLink.sendAllAxes();
+
+  // 20 ms Pause → ca. 50 Hz Updaterate
+  delay(20);
+}
+```
+
+---
+
+## Funktionsweise der inversen Kinematik
+
+### Koordinatentransformation
+
+Der Empfänger wandelt die zylindrischen Koordinaten (ψ, γ, l) wie folgt in kartesische Koordinaten um:
+
+```
+x = l · cos(ψ)
+y = l · sin(ψ)
+z = l · tan(γ)
+```
+
+### 2-Gelenk-IK-Löser
+
+Aus den kartesischen Koordinaten wird der Abstand `d` zur Armwurzel berechnet. Anschließend löst der Cosinus-Satz die Gelenkwinkel:
+
+```
+cos(θ_Ellbogen) = (d² - L1² - L2²) / (2 · L1 · L2)
+θ_Schulter     = atan2(z, r) - atan2(L2 · sin(θ_Ellbogen), L1 + L2 · cos(θ_Ellbogen))
+```
+
+<Aside type="caution">
+  Liegt der Zielpunkt außerhalb des Arbeitsraums (l > L1 + L2), streckt der Empfänger den Arm maximal aus, ohne einen Fehler zu erzeugen. Der Arm erreicht den Zielpunkt dann nicht exakt.
+</Aside>

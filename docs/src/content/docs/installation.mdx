@@ -1,0 +1,166 @@
+---
+title: Installation
+draft: false
+description: Schritt-für-Schritt-Anleitung zur Installation von roboPio – Bibliotheken einrichten, Board-Einstellungen und erstes Beispiel hochladen.
+---
+
+import { Steps, Aside, Code } from '@astrojs/starlight/components';
+
+Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – von der Erstinstallation bis zum ersten Test.
+
+## Voraussetzungen
+
+- **Arduino IDE** (Version 2.x empfohlen) oder **PlatformIO** (für den Empfänger)
+- **ESP32-Arduino-Kern** installiert (Board-Manager-URL: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`)
+- USB-Kabel für ESP32-S3 (USB-C oder Micro-USB je nach Board)
+
+---
+
+## Einrichtung
+
+<Steps>
+
+1. ### Repository klonen
+
+   Lade den Quellcode von GitHub herunter:
+
+   ```bash
+   git clone https://github.com/YOUR_USER/roboPio
+   cd roboPio
+   ```
+
+   Alternativ kann das Repository auch als ZIP heruntergeladen werden: **Code → Download ZIP**.
+
+2. ### RobotLink-Bibliothek installieren
+
+   Die Bibliothek `RobotLink` liegt als ZIP-Datei im Unterordner `lib/RobotLink/`.
+
+   **In der Arduino IDE:**
+
+   1. Menü: **Sketch → Bibliothek einbinden → .ZIP-Bibliothek hinzufügen…**
+   2. Im Dateiauswahl-Dialog zum Ordner `lib/RobotLink/` navigieren und die ZIP-Datei auswählen.
+   3. Die Arduino IDE bestätigt die Installation mit einer Erfolgsmeldung.
+
+   <Aside type="tip">
+     Die Bibliothek erscheint danach unter **Sketch → Bibliothek einbinden → RobotLink** und kann mit `#include <RobotLink.h>` eingebunden werden.
+   </Aside>
+
+3. ### Abhängigkeiten installieren
+
+   Folgende Bibliotheken müssen zusätzlich im **Library Manager** installiert werden (**Sketch → Bibliothek einbinden → Bibliotheken verwalten…**):
+
+   | Bibliothek | Version | Beschreibung |
+   |------------|---------|--------------|
+   | **FastLED** | ~3.9.0 | RGB-LED-Steuerung (WS2812B) |
+   | **Smoothed** | ^1.2 | Glättungsfilter für analoge Eingaben |
+
+   Einfach den Bibliotheksnamen in die Suchleiste eingeben und auf **Installieren** klicken.
+
+4. ### Board-Einstellungen konfigurieren (Sender)
+
+   Für den **Sender (ESP32-S3)** folgende Board-Einstellungen in der Arduino IDE wählen:
+
+   | Einstellung | Wert |
+   |------------|------|
+   | Board | `ESP32S3 Dev Module` |
+   | USB Mode | `Hardware CDC and JTAG` |
+   | Upload Speed | `921600` |
+   | Flash Size | `4MB (32Mb)` |
+
+   Das richtige Board auswählen: **Werkzeuge → Board → esp32 → ESP32S3 Dev Module**.
+
+5. ### Beispielprojekt öffnen
+
+   Die RobotLink-Bibliothek enthält fertige Beispiele für jeden Modus:
+
+   **Arduino IDE:** Datei → Beispiele → RobotLink → gewünschtes Beispiel
+
+   | Beispiel | Modus |
+   |----------|-------|
+   | `SenderDirect` | Direkt-Modus |
+   | `SenderCylindrical` | Zylindrisch-Modus |
+   | `SenderCartesian` | Kartesisch-Modus |
+
+   <Aside>
+     Die Beispiele sind vollständig lauffähig und müssen nur noch mit der korrekten MAC-Adresse des Empfängers konfiguriert werden (Schritt 7).
+   </Aside>
+
+6. ### Empfänger einrichten (PlatformIO)
+
+   Der Empfänger wird als **PlatformIO**-Projekt bereitgestellt (Ordner `receiver/`):
+
+   1. **VS Code** mit der PlatformIO-Erweiterung öffnen.
+   2. **Datei → Ordner öffnen…** → Ordner `receiver/` auswählen.
+   3. PlatformIO lädt automatisch alle Abhängigkeiten aus der `platformio.ini`.
+   4. Empfänger per USB anschließen und mit **PlatformIO: Upload** flashen.
+
+   ```ini
+   ; receiver/platformio.ini (Ausschnitt)
+   [env:esp32dev]
+   platform = espressif32
+   board = esp32dev
+   framework = arduino
+   ```
+
+7. ### MAC-Adresse ermitteln und eintragen
+
+   ESP-NOW benötigt die MAC-Adresse des Empfängers. So geht man vor:
+
+   **Schritt A – MAC-Adresse des Empfängers auslesen:**
+
+   Folgenden Sketch kurz auf den Empfänger hochladen:
+
+   ```cpp
+   #include <WiFi.h>
+   void setup() {
+     Serial.begin(115200);
+     // MAC-Adresse des Empfängers ausgeben
+     Serial.println(WiFi.macAddress());
+   }
+   void loop() {}
+   ```
+
+   Die Ausgabe im Seriellen Monitor sieht z. B. so aus: `A4:CF:12:34:56:78`
+
+   **Schritt B – MAC-Adresse in den Sender eintragen:**
+
+   Im gewählten Sender-Sketch die Variable `peerMac` anpassen:
+
+   ```cpp
+   // MAC-Adresse des Empfängers (Beispiel – bitte anpassen!)
+   uint8_t peerMac[] = { 0xA4, 0xCF, 0x12, 0x34, 0x56, 0x78 };
+
+   void setup() {
+     robotLink.beginSender(peerMac);
+   }
+   ```
+
+   <Aside type="caution">
+     Die MAC-Adresse muss exakt übereinstimmen. Bei falscher Adresse werden keine Daten übertragen und die Servos reagieren nicht.
+   </Aside>
+
+8. ### Ersten Test durchführen
+
+   1. Empfänger einschalten (Servos anschließen, 5V-Versorgung sicherstellen).
+   2. Sender (ESP32-S3) per USB mit Strom versorgen und den Sketch hochladen.
+   3. Die LED am Sender leuchtet in der Farbe des aktiven Modus (weiß = Modus 1).
+   4. Potentiometer drehen → Servos bewegen sich.
+
+   Bei Problemen: Seriellen Monitor (115200 Baud) öffnen – RobotLink gibt Statusinformationen aus.
+
+</Steps>
+
+---
+
+## Verdrahtung des Senders
+
+Die sechs Potentiometer werden an die ADC-fähigen GPIO-Pins des ESP32-S3 angeschlossen:
+
+- **VCC** (äußerer Pin) → **3,3 V** des ESP32-S3
+- **GND** (anderer äußerer Pin) → **GND** des ESP32-S3
+- **Schleifer** (mittlerer Pin) → jeweiliger **GPIO-Pin** (siehe Modus-Dokumentation)
+
+<Aside type="tip">
+  Für den Direkt-Modus werden die GPIOs **17, 5, 6, 7, 15, 16** verwendet.  
+  Für Zylindrisch- und Kartesisch-Modus: **4, 7, 6, 5, 15, 16**.
+</Aside>

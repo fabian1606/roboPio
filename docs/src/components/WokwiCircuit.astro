@@ -1,0 +1,257 @@
+---
+interface Pin {
+  gpio: number;
+  label: string;
+  color?: string;
+}
+
+interface Props {
+  pins: Pin[];
+  title?: string;
+}
+
+const { pins, title = 'Schaltplan' } = Astro.props;
+
+// Layout constants
+const SVG_W = 800;
+const SVG_H = 500;
+
+// ESP32-S3 board
+const BOARD_X = 280;
+const BOARD_Y = 100;
+const BOARD_W = 240;
+const BOARD_H = 300;
+
+// Potentiometer size
+const POT_W = 60;
+const POT_H = 50;
+
+// Distribute pots: left side and right side
+const leftPins = pins.slice(0, Math.ceil(pins.length / 2));
+const rightPins = pins.slice(Math.ceil(pins.length / 2));
+
+function potY(index: number, count: number): number {
+  const spacing = BOARD_H / (count + 1);
+  return BOARD_Y + spacing * (index + 1) - POT_H / 2;
+}
+
+const signalColors = [
+  '#e67e22', '#8e44ad', '#2980b9', '#27ae60', '#c0392b', '#16a085',
+];
+---
+
+<figure class="wokwi-circuit">
+  {title && <figcaption>{title}</figcaption>}
+  <svg
+    viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+    xmlns="http://www.w3.org/2000/svg"
+    role="img"
+    aria-label={title}
+    style="width:100%;max-width:800px;height:auto;display:block;"
+  >
+    <!-- Background -->
+    <rect width={SVG_W} height={SVG_H} fill="#f8f9fa" rx="8" />
+
+    <!-- ESP32-S3 Board body -->
+    <rect
+      x={BOARD_X}
+      y={BOARD_Y}
+      width={BOARD_W}
+      height={BOARD_H}
+      fill="#1a1a2e"
+      rx="6"
+      stroke="#34495e"
+      stroke-width="2"
+    />
+
+    <!-- Board label -->
+    <text
+      x={BOARD_X + BOARD_W / 2}
+      y={BOARD_Y + 22}
+      text-anchor="middle"
+      font-family="monospace"
+      font-size="11"
+      fill="#ecf0f1"
+      font-weight="bold"
+    >ESP32-S3</text>
+    <text
+      x={BOARD_X + BOARD_W / 2}
+      y={BOARD_Y + 36}
+      text-anchor="middle"
+      font-family="monospace"
+      font-size="9"
+      fill="#95a5a6"
+    >DevKitC-1</text>
+
+    <!-- 3.3V and GND rails on board -->
+    <rect x={BOARD_X + 10} y={BOARD_Y + 50} width={BOARD_W - 20} height={6} fill="#c0392b" rx="2" opacity="0.7" />
+    <text x={BOARD_X + 16} y={BOARD_Y + 46} font-family="monospace" font-size="8" fill="#c0392b">3.3V</text>
+    <rect x={BOARD_X + 10} y={BOARD_Y + 62} width={BOARD_W - 20} height={6} fill="#2c3e50" rx="2" opacity="0.7" />
+    <text x={BOARD_X + 16} y={BOARD_Y + 77} font-family="monospace" font-size="8" fill="#7f8c8d">GND</text>
+
+    <!-- Left-side potentiometers -->
+    {leftPins.map((pin, i) => {
+      const px = 30;
+      const py = potY(i, leftPins.length);
+      const cy = py + POT_H / 2;
+      const boardConnX = BOARD_X;
+      const boardConnY = BOARD_Y + 90 + i * (BOARD_H - 90) / (leftPins.length);
+      const sigColor = pin.color ?? signalColors[i % signalColors.length];
+
+      return (
+        <>
+          {/* Potentiometer body */}
+          <rect x={px} y={py} width={POT_W} height={POT_H} fill="#ecf0f1" rx="4" stroke="#bdc3c7" stroke-width="1.5" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H / 2} r="12" fill="#95a5a6" stroke="#7f8c8d" stroke-width="1.5" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H / 2} r="5" fill="#2c3e50" />
+          {/* Pot pins: top=VCC, center=wiper, bottom=GND */}
+          <circle cx={px + 10} cy={py + POT_H} r="3" fill="#c0392b" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H} r="3" fill={sigColor} />
+          <circle cx={px + POT_W - 10} cy={py + POT_H} r="3" fill="#2c3e50" />
+
+          {/* VCC wire (red) */}
+          <path
+            d={`M${px + 10},${py + POT_H} L${px + 10},${py - 10} L${BOARD_X - 5},${BOARD_Y + 53}`}
+            fill="none" stroke="#c0392b" stroke-width="1.5" opacity="0.7"
+          />
+          {/* GND wire (black) */}
+          <path
+            d={`M${px + POT_W - 10},${py + POT_H} L${px + POT_W - 10},${py - 16} L${BOARD_X - 5},${BOARD_Y + 65}`}
+            fill="none" stroke="#2c3e50" stroke-width="1.5" opacity="0.7"
+          />
+          {/* Signal wire */}
+          <path
+            d={`M${px + POT_W / 2},${py + POT_H} L${px + POT_W / 2},${cy + 25} L${boardConnX},${boardConnY}`}
+            fill="none" stroke={sigColor} stroke-width="2" stroke-dasharray="none"
+          />
+
+          {/* GPIO dot on board edge */}
+          <circle cx={boardConnX} cy={boardConnY} r="4" fill={sigColor} stroke="#fff" stroke-width="1" />
+          <text
+            x={boardConnX + 8}
+            y={boardConnY + 4}
+            font-family="monospace"
+            font-size="9"
+            fill="#ecf0f1"
+          >GPIO{pin.gpio}</text>
+
+          {/* Label above pot */}
+          <text
+            x={px + POT_W / 2}
+            y={py - 4}
+            text-anchor="middle"
+            font-family="sans-serif"
+            font-size="9"
+            fill="#2c3e50"
+          >{pin.label}</text>
+          <text
+            x={px + POT_W / 2}
+            y={py - 14}
+            text-anchor="middle"
+            font-family="monospace"
+            font-size="8"
+            fill="#7f8c8d"
+          >GPIO{pin.gpio}</text>
+        </>
+      );
+    })}
+
+    <!-- Right-side potentiometers -->
+    {rightPins.map((pin, i) => {
+      const px = SVG_W - 30 - POT_W;
+      const py = potY(i, rightPins.length);
+      const cy = py + POT_H / 2;
+      const boardConnX = BOARD_X + BOARD_W;
+      const boardConnY = BOARD_Y + 90 + i * (BOARD_H - 90) / (rightPins.length);
+      const globalIdx = leftPins.length + i;
+      const sigColor = pin.color ?? signalColors[globalIdx % signalColors.length];
+
+      return (
+        <>
+          {/* Potentiometer body */}
+          <rect x={px} y={py} width={POT_W} height={POT_H} fill="#ecf0f1" rx="4" stroke="#bdc3c7" stroke-width="1.5" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H / 2} r="12" fill="#95a5a6" stroke="#7f8c8d" stroke-width="1.5" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H / 2} r="5" fill="#2c3e50" />
+          {/* Pot pins */}
+          <circle cx={px + 10} cy={py + POT_H} r="3" fill="#c0392b" />
+          <circle cx={px + POT_W / 2} cy={py + POT_H} r="3" fill={sigColor} />
+          <circle cx={px + POT_W - 10} cy={py + POT_H} r="3" fill="#2c3e50" />
+
+          {/* VCC wire (red) */}
+          <path
+            d={`M${px + 10},${py + POT_H} L${px + 10},${py - 10} L${BOARD_X + BOARD_W + 5},${BOARD_Y + 53}`}
+            fill="none" stroke="#c0392b" stroke-width="1.5" opacity="0.7"
+          />
+          {/* GND wire (black) */}
+          <path
+            d={`M${px + POT_W - 10},${py + POT_H} L${px + POT_W - 10},${py - 16} L${BOARD_X + BOARD_W + 5},${BOARD_Y + 65}`}
+            fill="none" stroke="#2c3e50" stroke-width="1.5" opacity="0.7"
+          />
+          {/* Signal wire */}
+          <path
+            d={`M${px + POT_W / 2},${py + POT_H} L${px + POT_W / 2},${cy + 25} L${boardConnX},${boardConnY}`}
+            fill="none" stroke={sigColor} stroke-width="2"
+          />
+
+          {/* GPIO dot on board edge */}
+          <circle cx={boardConnX} cy={boardConnY} r="4" fill={sigColor} stroke="#fff" stroke-width="1" />
+          <text
+            x={boardConnX - 8}
+            y={boardConnY + 4}
+            text-anchor="end"
+            font-family="monospace"
+            font-size="9"
+            fill="#ecf0f1"
+          >GPIO{pin.gpio}</text>
+
+          {/* Label above pot */}
+          <text
+            x={px + POT_W / 2}
+            y={py - 4}
+            text-anchor="middle"
+            font-family="sans-serif"
+            font-size="9"
+            fill="#2c3e50"
+          >{pin.label}</text>
+          <text
+            x={px + POT_W / 2}
+            y={py - 14}
+            text-anchor="middle"
+            font-family="monospace"
+            font-size="8"
+            fill="#7f8c8d"
+          >GPIO{pin.gpio}</text>
+        </>
+      );
+    })}
+
+    <!-- Legend -->
+    <g transform={`translate(${BOARD_X}, ${BOARD_Y + BOARD_H + 18})`}>
+      <rect x="0" y="0" width="240" height="22" fill="#ecf0f1" rx="4" />
+      <line x1="8" y1="11" x2="30" y2="11" stroke="#c0392b" stroke-width="2" />
+      <text x="34" y="15" font-family="sans-serif" font-size="9" fill="#555">3.3V</text>
+      <line x1="70" y1="11" x2="92" y2="11" stroke="#2c3e50" stroke-width="2" />
+      <text x="96" y="15" font-family="sans-serif" font-size="9" fill="#555">GND</text>
+      <line x1="132" y1="11" x2="154" y2="11" stroke="#e67e22" stroke-width="2" />
+      <text x="158" y="15" font-family="sans-serif" font-size="9" fill="#555">Signal</text>
+    </g>
+  </svg>
+</figure>
+
+<style>
+  .wokwi-circuit {
+    margin: 1.5rem 0;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f8f9fa;
+  }
+  .wokwi-circuit figcaption {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--sl-color-text-accent);
+    border-bottom: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg-sidebar);
+  }
+</style>

@@ -1,0 +1,17 @@
+{
+  "name": "RobotLink",
+  "version": "1.0.0",
+  "description": "ESP-NOW Wrapper für 6-Achs-Robotersteuerung auf ESP32/ESP32-S3",
+  "keywords": "esp-now, esp32, robot, ik, fastled",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "headers": "RobotLink.h",
+  "dependencies": {
+    "fastled/FastLED": "~3.9.0",
+    "mattfryer/Smoothed": "^1.2",
+    "workloads/SCServo": "^1.0.1"
+  },
+  "export": {
+    "include": ["src", "examples", "library.properties", "keywords.txt", "README.md"]
+  }
+}

@@ -1,0 +1,134 @@
+---
+title: Direkt-Modus
+draft: false
+description: Modus 1 – Direktsteuerung (COORD_DIRECT). Jedes Potentiometer steuert direkt einen Servo, keine inverse Kinematik.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+import WokwiCircuit from '../../../components/WokwiCircuit.astro';
+
+<Badge text="Modus 1" variant="default" /> <Badge text="LED: Weiß" variant="note" />
+
+## Übersicht
+
+Im **Direkt-Modus** (`COORD_DIRECT`) wird jeder Servo direkt von einem Potentiometer gesteuert – ohne Koordinatentransformation oder inverse Kinematik. Der analoge Rohwert des jeweiligen ADC-Pins (0–4095) wird 1:1 auf den Servo-Winkel abgebildet.
+
+Dieser Modus eignet sich besonders gut für:
+
+- **Erstinbetriebnahme** und Kalibrierung einzelner Gelenke
+- **Diagnose** bei Fehlfunktionen (jede Achse unabhängig prüfbar)
+- **Einfache Bewegungsabläufe**, bei denen absolute Koordinaten nicht benötigt werden
+
+---
+
+## Achsenbelegung
+
+| Achse | GPIO | Funktion | Servo |
+|-------|------|----------|-------|
+| 0 | 17 | Basis-Rotation | 1 |
+| 1 | 5 | Schulter | 2 |
+| 2 | 6 | Ellbogen | 3 |
+| 3 | 7 | Handgelenk-Neigung | 4 |
+| 4 | 15 | Handgelenk-Rotation | 5 |
+| 5 | 16 | Greifer | 6 |
+
+---
+
+## Schaltplan
+
+<WokwiCircuit
+  title="Direkt-Modus – 6 Potentiometer am ESP32-S3"
+  pins={[
+    { gpio: 17, label: 'Basis-Rotation' },
+    { gpio: 5,  label: 'Schulter' },
+    { gpio: 6,  label: 'Ellbogen' },
+    { gpio: 7,  label: 'HG-Neigung' },
+    { gpio: 15, label: 'HG-Rotation' },
+    { gpio: 16, label: 'Greifer' },
+  ]}
+/>
+
+Jedes Potentiometer wird wie folgt angeschlossen:
+
+| Potentiometer-Pin | Verbindung |
+|-------------------|-----------|
+| VCC (äußerer Pin) | 3,3 V |
+| GND (anderer äußerer Pin) | GND |
+| Schleifer (Mitte) | GPIO-Pin (s. Tabelle oben) |
+
+<Aside type="tip">
+  Der ESP32-S3 hat 12-Bit-ADCs (0–4095). Die RobotLink-Bibliothek übernimmt die Skalierung auf den Servo-Winkelbereich.
+</Aside>
+
+---
+
+## Beispielcode
+
+Der vollständige Arduino-Sketch für den Direkt-Modus:
+
+```cpp
+#include <RobotLink.h>
+
+// GPIO-Pins für die sechs Potentiometer (Achse 0–5)
+const int AXIS_PINS[6] = { 17, 5, 6, 7, 15, 16 };
+
+// Glättungswert pro Achse (0 = aus, höher = stärker geglättet)
+const int SMOOTHING[6] = { 10, 10, 10, 10, 10, 10 };
+
+void setup() {
+  // Glättungsfilter für jede Achse einstellen
+  for (int i = 0; i < 6; i++) {
+    if (SMOOTHING[i] > 0) {
+      robotLink.setAxisSmoothing(i, SMOOTHING[i]);
+    }
+  }
+
+  // Sender starten (keine explizite Modusangabe nötig –
+  // COORD_DIRECT ist der Standard-Modus)
+  robotLink.beginSender();
+}
+
+void loop() {
+  // Interne Aktualisierung (Glättung, Statusüberwachung)
+  robotLink.update();
+
+  // Potentiometer auslesen und Achswerte setzen
+  for (int i = 0; i < 6; i++) {
+    robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
+  }
+
+  // Alle Achswerte per ESP-NOW an den Empfänger senden
+  robotLink.sendAllAxes();
+
+  // 20 ms warten → ca. 50 Hz Updaterate
+  delay(20);
+}
+```
+
+<Aside>
+  Die Funktion `robotLink.beginSender()` ohne Argument verwendet den im EEPROM gespeicherten Modus. Zum expliziten Setzen von Modus 1 kann `robotLink.setCoordMode(COORD_DIRECT)` **vor** `beginSender()` aufgerufen werden.
+</Aside>
+
+---
+
+## Funktionsweise im Detail
+
+### Glättungsfilter
+
+Der Glättungsparameter (`SMOOTHING`) wendet einen gleitenden Durchschnitt auf die ADC-Werte an. Ein Wert von `10` bedeutet, dass der Durchschnitt der letzten 10 Messungen verwendet wird. Dies reduziert ADC-Rauschen und verhindert zitternde Servos.
+
+```cpp
+// Stärkere Glättung für die Basis (größere Trägheit gewünscht)
+robotLink.setAxisSmoothing(0, 20);
+
+// Keine Glättung für den Greifer (sofortige Reaktion)
+robotLink.setAxisSmoothing(5, 0);
+```
+
+### Übertragungsrate
+
+Die `delay(20)`-Anweisung ergibt eine Übertragungsrate von ca. **50 Hz**. Diese kann erhöht werden, führt aber zu mehr ESP-NOW-Paketen. Der Empfänger verarbeitet jeden empfangenen Wert sofort.
+
+### Moduswechsel
+
+Um in den Direkt-Modus zu wechseln: **Doppel-Reset** des ESP32-S3 innerhalb von 400 ms, bis die LED **weiß** leuchtet.
