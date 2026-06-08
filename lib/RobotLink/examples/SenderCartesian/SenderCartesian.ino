@@ -5,30 +5,40 @@
 // Sender: Kartesische Koordinaten (Mode 3)
 //
 // Poti-Belegung:
-//   Poti 0 (GPIO 4)  → X            (vorne/hinten, mm)
-//   Poti 1 (GPIO 7)  → Y            (links/rechts, mm)
-//   Poti 2 (GPIO 6)  → Z            (hoch/runter, mm)
-//   Poti 3 (GPIO 5)  → Tool-Pitch η (Endeffektor-Neigung, rad)
-//   Poti 4 (GPIO 15) → Wrist-Rotate (Servo 5, direkt)
-//   Poti 5 (GPIO 16) → Greifer      (Servo 6, direkt)
+//   xPot       (GPIO  4) → Achse 0 → X            (vorne/hinten, mm)
+//   yPot       (GPIO  7) → Achse 1 → Y            (links/rechts, mm)
+//   zPot       (GPIO  6) → Achse 2 → Z            (hoch/runter, mm)
+//   pitchPot   (GPIO  5) → Achse 3 → Tool-Pitch   (Endeffektor-Neigung)
+//   wristPot   (GPIO 15) → Achse 4 → Wrist-Rotate (Servo 5, direkt)
+//   gripperPot (GPIO 16) → Achse 5 → Greifer      (Servo 6, direkt)
 //
 // Die Kinematik (IK) läuft auf dem Receiver — dieser Sender schickt nur
 // die rohen Poti-Werte. CoordMode wird im Frame mitgesendet.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const uint8_t AXIS_PINS[6] = { 4,   7,   6,   5,   15,   16 };
+const int xPot       = 4;   // Achse 0 → X (vorne/hinten)
+const int yPot       = 7;   // Achse 1 → Y (links/rechts)
+const int zPot       = 6;   // Achse 2 → Z (hoch/runter)
+const int pitchPot   = 5;   // Achse 3 → Tool-Pitch
+const int wristPot   = 15;  // Achse 4 → Wrist-Rotate
+const int gripperPot = 16;  // Achse 5 → Greifer
 
-// Smoothing-Stärke pro Achse (0 = aus, 1 = kaum, 50 = stark)
-const uint8_t SMOOTHING[6] = { 10,  10,  10,  10,   0,   10 };
+// Smoothing-Stärke (0 = aus, 1 = kaum, 50 = stark)
+const int smoothing = 10;
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void setup() {
     Serial.begin(115200);
     unsigned long t = millis();
     while (!Serial && (millis() - t) < 5000) delay(10);
 
-    for (int i = 0; i < 6; i++) {
-        if (SMOOTHING[i] > 0) robotLink.setAxisSmoothing(i, SMOOTHING[i]);
-    }
+    robotLink.setAxisSmoothing(0, smoothing);
+    robotLink.setAxisSmoothing(1, smoothing);
+    robotLink.setAxisSmoothing(2, smoothing);
+    robotLink.setAxisSmoothing(3, smoothing);
+    robotLink.setAxisSmoothing(4, smoothing);
+    robotLink.setAxisSmoothing(5, smoothing);
 
     robotLink.setCoordMode(COORD_CARTESIAN);
 
@@ -40,13 +50,17 @@ void setup() {
 
 void loop() {
     robotLink.update();  // polls mode button
-    for (int i = 0; i < 6; i++) {
-        robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
-    }
 
-    Serial.printf("[X] %4d [Y] %4d [Z] %4d [η] %4d\n",
-                  analogRead(AXIS_PINS[0]), analogRead(AXIS_PINS[1]),
-                  analogRead(AXIS_PINS[2]), analogRead(AXIS_PINS[3]));
+    robotLink.setAxisValue(0, analogRead(xPot));
+    robotLink.setAxisValue(1, analogRead(yPot));
+    robotLink.setAxisValue(2, analogRead(zPot));
+    robotLink.setAxisValue(3, analogRead(pitchPot));
+    robotLink.setAxisValue(4, analogRead(wristPot));
+    robotLink.setAxisValue(5, analogRead(gripperPot));
+
+    Serial.printf("[X] %4d [Y] %4d [Z] %4d [Pitch] %4d\n",
+                  analogRead(xPot), analogRead(yPot),
+                  analogRead(zPot), analogRead(pitchPot));
 
     robotLink.sendAllAxes();
     delay(20);  // 50 Hz

@@ -1,0 +1,37 @@
+name: Release RobotLink ZIP
+
+on:
+  push:
+    tags:
+      - "lib/v*"   # z. B. lib/v1.0.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # für gh release create
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version aus library.properties lesen
+        id: version
+        run: |
+          VERSION=$(grep '^version=' lib/RobotLink/library.properties | cut -d= -f2)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "ZIP=RobotLink-$VERSION.zip" >> "$GITHUB_OUTPUT"
+
+      - name: ZIP bauen
+        run: |
+          cd lib
+          find RobotLink -name ".DS_Store" -delete
+          zip -r "../${{ steps.version.outputs.ZIP }}" RobotLink
+
+      - name: GitHub Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "${{ steps.version.outputs.ZIP }}" \
+            --title "RobotLink ${{ steps.version.outputs.VERSION }}" \
+            --notes "Arduino-Library als ZIP — Installation via \`Sketch → Include Library → Add .ZIP Library…\`"

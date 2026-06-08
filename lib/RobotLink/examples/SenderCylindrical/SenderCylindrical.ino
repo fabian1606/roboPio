@@ -5,26 +5,27 @@
 // Sender: Zylindrische Koordinaten (Mode 2)
 //
 // Poti-Belegung:
-//   Poti 0 (GPIO 17) → Basisrotation  (Servo 1, direkt)
-//   Poti 1 (GPIO  5) → Elevation      (Winkel nach oben, 0°–80°)
-//   Poti 2 (GPIO  6) → Radius         (lineares Ein-/Ausfahren)
-//   Poti 3 (GPIO  7) → Handgelenk     (Servo 5, direkt)
-//   Poti 4 (GPIO 15) → (unbenutzt)
-//   Poti 5 (GPIO 16) → Greifer        (Servo 6, direkt)
+//   basePot    (GPIO  4) → Achse 0 → Basisrotation  (Servo 1, direkt)
+//   elevPot    (GPIO  7) → Achse 1 → Elevation      (Winkel nach oben, 0°–80°)
+//   radiusPot  (GPIO  6) → Achse 2 → Radius         (lineares Ein-/Ausfahren)
+//   wristPot   (GPIO  5) → Achse 3 → Handgelenk     (Servo 5, direkt)
+//                        → Achse 4 → unbenutzt
+//   gripperPot (GPIO 16) → Achse 5 → Greifer        (Servo 6, direkt)
 //
 // Die Kinematik (IK) läuft auf dem Receiver — dieser Sender schickt nur
 // die Koordinaten. Modus muss auf beiden Boards übereinstimmen (Mode 2).
 // Doppeltes RST-Drücken wechselt den Modus (1→2→3→4→5→1).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GPIO-Pin pro Eingangsachse
-//   Index:       0    1    2    3     4     5
-//   Bedeutung:   Rot  Elev Rad  Handg (–)   Greif
-// const uint8_t AXIS_PINS[6] = { 4,   5,   6,   7,   15,   16 };
-const uint8_t AXIS_PINS[6] = { 4,   7,   6,   5,   15,   16 };
+const int basePot    = 4;   // Achse 0 → Basisrotation
+const int elevPot    = 7;   // Achse 1 → Elevation
+const int radiusPot  = 6;   // Achse 2 → Radius
+const int wristPot   = 5;   // Achse 3 → Handgelenk
+                            // Achse 4 → unbenutzt
+const int gripperPot = 16;  // Achse 5 → Greifer
 
-// Smoothing-Stärke pro Achse (0 = aus, 1 = kaum, 50 = stark)
-const uint8_t SMOOTHING[6] = { 10,  10,  10,  10,   0,   10 };
+// Smoothing-Stärke (0 = aus, 1 = kaum, 50 = stark)
+const int smoothing = 10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -33,9 +34,12 @@ void setup() {
     unsigned long t = millis();
     while (!Serial && (millis() - t) < 5000) delay(10);
 
-    for (int i = 0; i < 6; i++) {
-        if (SMOOTHING[i] > 0) robotLink.setAxisSmoothing(i, SMOOTHING[i]);
-    }
+    robotLink.setAxisSmoothing(0, smoothing);
+    robotLink.setAxisSmoothing(1, smoothing);
+    robotLink.setAxisSmoothing(2, smoothing);
+    robotLink.setAxisSmoothing(3, smoothing);
+    // Achse 4 unbenutzt — kein Smoothing nötig
+    robotLink.setAxisSmoothing(5, smoothing);
 
     robotLink.setCoordMode(COORD_CYLINDRICAL);
 
@@ -47,13 +51,16 @@ void setup() {
 
 void loop() {
     robotLink.update();  // polls mode button
-    for (int i = 0; i < 6; i++) {
-        robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
-    }
 
-    // Debug: Elevation und Radius ausgeben
+    robotLink.setAxisValue(0, analogRead(basePot));
+    robotLink.setAxisValue(1, analogRead(elevPot));
+    robotLink.setAxisValue(2, analogRead(radiusPot));
+    robotLink.setAxisValue(3, analogRead(wristPot));
+    robotLink.setAxisValue(4, 0);  // unbenutzt
+    robotLink.setAxisValue(5, analogRead(gripperPot));
+
     Serial.printf("[Elev] %4d  [Rad] %4d\n",
-                  analogRead(AXIS_PINS[1]), analogRead(AXIS_PINS[2]));
+                  analogRead(elevPot), analogRead(radiusPot));
 
     robotLink.sendAllAxes();
     delay(20);  // 50 Hz

@@ -20,7 +20,8 @@ wird vom roboPio-Projekt zugleich als lokale PIO-Library verwendet.
 
 ## Sender: Installation in der Arduino IDE
 
-1. ZIP herunterladen (`RobotLink-x.y.z.zip`, siehe Releases).
+1. ZIP herunterladen: **[Releases](https://github.com/fabian1606/roboPio/releases/latest)** →
+   `RobotLink-x.y.z.zip` herunterladen.
 2. In der IDE: `Sketch → Include Library → Add .ZIP Library…` und das ZIP
    auswählen.
 3. Falls die IDE „Install missing dependencies" anbietet → mit Ja bestätigen.
@@ -29,14 +30,16 @@ wird vom roboPio-Projekt zugleich als lokale PIO-Library verwendet.
    installieren (falls nicht vorhanden).
 5. `File → Examples → RobotLink → SenderDirect` öffnen (oder
    `SenderCylindrical`), Board ESP32-S3-Dev-Modul wählen, hochladen.
-6. Sender und Receiver müssen im **selben Mode (1–5)** sein, sonst werden
-   Frames verworfen. Mode-Wechsel via **Doppel-Reset** (zwei RST-Drücke
-   innerhalb 400 ms) oder Mode-Button auf GPIO0.
+6. Sender und Receiver müssen im **selben Gruppenkanal (1–5)** sein, sonst
+   werden Frames verworfen. Kanal-Wechsel via **Doppel-Reset** (zwei RST-Drücke
+   innerhalb 400 ms) oder Mode-Button auf GPIO0. Der Koordinatenmodus
+   (`COORD_DIRECT` / `COORD_CYLINDRICAL` / `COORD_CARTESIAN`) ist davon
+   unabhängig und wird per `setCoordMode()` gesetzt.
 
 ## Receiver: Build und Flashen via PlatformIO
 
 ```
-git clone <repo-url>
+git clone https://github.com/fabian1606/roboPio
 cd roboPio
 pio run -e receiver -t upload
 ```
@@ -62,10 +65,14 @@ Das ist der einzige PIO-Env im Projekt. Dependencies kommen aus
 #include <RobotLink.h>
 
 // — Sender —
-robotLink.setCoordMode(COORD_CYLINDRICAL);   // optional, Default: COORD_DIRECT
-robotLink.setAxisSmoothing(0, 10);           // pro Achse, 1 (kaum) … 50 (stark)
-robotLink.beginSender();                     // ESP-NOW + LED + Doppel-Reset
-robotLink.setAxisValue(0, analogRead(...));  // im loop()
+const int basePot = 4;   // GPIO-Pin des Potis für Achse 0
+
+robotLink.setCoordMode(COORD_CYLINDRICAL);  // optional, Default: COORD_DIRECT
+robotLink.setAxisSmoothing(0, 10);          // pro Achse, 1 (kaum) … 50 (stark)
+robotLink.beginSender();                    // ESP-NOW + LED + Doppel-Reset
+
+// im loop():
+robotLink.setAxisValue(0, analogRead(basePot));
 robotLink.sendAllAxes();
 
 // — Receiver —
@@ -88,9 +95,9 @@ sind ESP32-spezifisch).
 
 ---
 
-## ZIP für Verteilung bauen
+## ZIP für Verteilung bauen und als Release veröffentlichen
 
-```
+```bash
 cd lib
 find RobotLink -name ".DS_Store" -delete
 zip -r ../RobotLink-1.0.0.zip RobotLink
@@ -98,3 +105,14 @@ zip -r ../RobotLink-1.0.0.zip RobotLink
 
 Wichtig: oberster Eintrag im ZIP muss der Ordner `RobotLink/` sein,
 sonst lehnt die Arduino IDE den Import ab.
+
+Anschließend ein GitHub Release anlegen:
+
+```bash
+gh release create lib/v1.0.0 ../RobotLink-1.0.0.zip \
+  --title "RobotLink 1.0.0" \
+  --notes "Erste stabile Version der RobotLink-Library."
+```
+
+Der direkte Download-Link lautet dann:
+`https://github.com/<user>/roboPio/releases/download/lib/v1.0.0/RobotLink-1.0.0.zip`

@@ -1,13 +1,13 @@
 ---
 title: Direkt-Modus
 draft: false
-description: Modus 1 – Direktsteuerung (COORD_DIRECT). Jedes Potentiometer steuert direkt einen Servo, keine inverse Kinematik.
+description: Direktsteuerung (COORD_DIRECT). Jedes Potentiometer steuert direkt einen Servo, keine inverse Kinematik.
 ---
 
 import { Aside, Badge } from '@astrojs/starlight/components';
 import WokwiCircuit from '../../../components/WokwiCircuit.astro';
 
-<Badge text="Modus 1" variant="default" /> <Badge text="LED: Weiß" variant="note" />
+<Badge text="COORD_DIRECT" variant="default" />
 
 ## Übersicht
 
@@ -64,49 +64,48 @@ Jedes Potentiometer wird wie folgt angeschlossen:
 
 ## Beispielcode
 
-Der vollständige Arduino-Sketch für den Direkt-Modus:
-
 ```cpp
 #include <RobotLink.h>
 
-// GPIO-Pins für die sechs Potentiometer (Achse 0–5)
-const int AXIS_PINS[6] = { 17, 5, 6, 7, 15, 16 };
+// GPIO-Pin pro Servo
+const int servo1Pin = 17;  // Basis-Rotation
+const int servo2Pin = 5;   // Schulter
+const int servo3Pin = 6;   // Ellbogen
+const int servo4Pin = 7;   // Handgelenk-Neigung
+const int servo5Pin = 15;  // Handgelenk-Rotation
+const int servo6Pin = 16;  // Greifer
 
-// Glättungswert pro Achse (0 = aus, höher = stärker geglättet)
-const int SMOOTHING[6] = { 10, 10, 10, 10, 10, 10 };
+const int smoothing = 10;  // Glättungsstärke (0 = aus, 50 = stark)
 
 void setup() {
-  // Glättungsfilter für jede Achse einstellen
-  for (int i = 0; i < 6; i++) {
-    if (SMOOTHING[i] > 0) {
-      robotLink.setAxisSmoothing(i, SMOOTHING[i]);
-    }
-  }
+  robotLink.setAxisSmoothing(0, smoothing);
+  robotLink.setAxisSmoothing(1, smoothing);
+  robotLink.setAxisSmoothing(2, smoothing);
+  robotLink.setAxisSmoothing(3, smoothing);
+  robotLink.setAxisSmoothing(4, smoothing);
+  robotLink.setAxisSmoothing(5, smoothing);
 
-  // Sender starten (keine explizite Modusangabe nötig –
-  // COORD_DIRECT ist der Standard-Modus)
+  // COORD_DIRECT ist der Standard – kein setCoordMode() nötig
   robotLink.beginSender();
 }
 
 void loop() {
-  // Interne Aktualisierung (Glättung, Statusüberwachung)
   robotLink.update();
 
-  // Potentiometer auslesen und Achswerte setzen
-  for (int i = 0; i < 6; i++) {
-    robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
-  }
+  robotLink.setAxisValue(0, analogRead(servo1Pin));
+  robotLink.setAxisValue(1, analogRead(servo2Pin));
+  robotLink.setAxisValue(2, analogRead(servo3Pin));
+  robotLink.setAxisValue(3, analogRead(servo4Pin));
+  robotLink.setAxisValue(4, analogRead(servo5Pin));
+  robotLink.setAxisValue(5, analogRead(servo6Pin));
 
-  // Alle Achswerte per ESP-NOW an den Empfänger senden
   robotLink.sendAllAxes();
-
-  // 20 ms warten → ca. 50 Hz Updaterate
-  delay(20);
+  delay(20);  // 50 Hz
 }
 ```
 
 <Aside>
-  Die Funktion `robotLink.beginSender()` ohne Argument verwendet den im EEPROM gespeicherten Modus. Zum expliziten Setzen von Modus 1 kann `robotLink.setCoordMode(COORD_DIRECT)` **vor** `beginSender()` aufgerufen werden.
+  Der Gruppenkanal (LED-Farbe) ist unabhängig vom Koordinatenmodus. Sender und Empfänger müssen auf demselben Kanal sein – der Kanal wird per Doppel-Reset gewechselt.
 </Aside>
 
 ---
@@ -115,7 +114,7 @@ void loop() {
 
 ### Glättungsfilter
 
-Der Glättungsparameter (`SMOOTHING`) wendet einen gleitenden Durchschnitt auf die ADC-Werte an. Ein Wert von `10` bedeutet, dass der Durchschnitt der letzten 10 Messungen verwendet wird. Dies reduziert ADC-Rauschen und verhindert zitternde Servos.
+Der Glättungsparameter wendet einen gleitenden Durchschnitt auf die ADC-Werte an. Ein Wert von `10` bedeutet, dass der Durchschnitt der letzten 10 Messungen verwendet wird. Dies reduziert ADC-Rauschen und verhindert zitternde Servos.
 
 ```cpp
 // Stärkere Glättung für die Basis (größere Trägheit gewünscht)
@@ -128,7 +127,3 @@ robotLink.setAxisSmoothing(5, 0);
 ### Übertragungsrate
 
 Die `delay(20)`-Anweisung ergibt eine Übertragungsrate von ca. **50 Hz**. Diese kann erhöht werden, führt aber zu mehr ESP-NOW-Paketen. Der Empfänger verarbeitet jeden empfangenen Wert sofort.
-
-### Moduswechsel
-
-Um in den Direkt-Modus zu wechseln: **Doppel-Reset** des ESP32-S3 innerhalb von 400 ms, bis die LED **weiß** leuchtet.

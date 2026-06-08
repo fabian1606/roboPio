@@ -31,9 +31,9 @@ Die gesamte Kommunikationslogik ist in der **RobotLink**-Bibliothek gekapselt, d
 
 ---
 
-## Ansteuerungsmodi
+## Koordinatenmodi
 
-roboPio unterstützt drei verschiedene Koordinatenmodi. Der aktive Modus wird beim Start automatisch aus dem EEPROM geladen und per LED-Farbe angezeigt.
+roboPio unterstützt drei verschiedene Koordinatenmodi, die unabhängig vom Gruppenkanal gewählt werden können.
 
 <CardGrid>
   <Card title="Direkt-Modus" icon="pencil">
@@ -55,36 +55,40 @@ roboPio unterstützt drei verschiedene Koordinatenmodi. Der aktive Modus wird be
 
 ---
 
-## LED-Anzeige
+## Gruppenkanäle (LED-Farbe)
 
-Die integrierte WS2812B-RGB-LED zeigt den aktuellen Modus durch ihre Farbe an:
+Die integrierte WS2812B-RGB-LED zeigt an, auf welchem **Gruppenkanal** Sender und Empfänger eingestellt sind. Sender und Empfänger müssen dieselbe Farbe haben, damit Frames akzeptiert werden – alle anderen Frames werden verworfen.
 
-| Modus | Farbe | Beschreibung |
-|-------|-------|--------------|
-| 1 | Weiß | Direkt-Modus (COORD_DIRECT) |
-| 2 | Rot | Zylindrisch-Modus (COORD_CYLINDRICAL) |
-| 3 | Grün | Kartesisch-Modus (COORD_CARTESIAN) |
-| 4 | Blau | Modus 4 (reserviert) |
-| 5 | Magenta | Modus 5 (reserviert) |
+Das ermöglicht, dass **mehrere Gruppen gleichzeitig** im selben Raum arbeiten, ohne sich gegenseitig zu stören.
+
+| Farbe | Gruppe | Bedeutung |
+|-------|--------|-----------|
+| Weiß | 1 | Gruppe 1 – Sender und Empfänger kommunizieren auf Kanal 1 |
+| Rot | 2 | Gruppe 2 – unabhängig von Gruppe 1 |
+| Grün | 3 | Gruppe 3 |
+| Blau | 4 | Gruppe 4 |
+| Magenta | 5 | Gruppe 5 |
+
+Jede Gruppe kann dabei **jeden Koordinatenmodus** (Direkt, Zylindrisch, Kartesisch) unabhängig verwenden.
 
 ---
 
-## Moduswechsel
+## Gruppenkanal wechseln
 
-Der aktive Modus wird im EEPROM des ESP32-S3 gespeichert und bleibt nach dem Aus- und Einschalten erhalten.
+Der aktive Gruppenkanal wird im EEPROM des ESP32-S3 gespeichert und bleibt nach dem Aus- und Einschalten erhalten.
 
-**Zum Wechseln des Modus:**
+**Zum Wechseln des Kanals:**
 
 1. ESP32-S3 **kurz zurücksetzen** (Reset-Taste drücken und loslassen).
 2. Innerhalb von **400 ms** erneut zurücksetzen.
 
-Bei einem Doppel-Reset innerhalb dieses Zeitfensters wird der Modus um eins weitergeschaltet:
+Bei einem Doppel-Reset innerhalb dieses Zeitfensters wird der Kanal um eins weitergeschaltet:
 
 ```
 1 (Weiß) → 2 (Rot) → 3 (Grün) → 4 (Blau) → 5 (Magenta) → 1 (Weiß) → …
 ```
 
-Die neue Modusfarbe leuchtet kurz auf, bevor der Betrieb im neuen Modus beginnt.
+Die neue Kanalfarbe leuchtet kurz auf, bevor der Betrieb im neuen Kanal beginnt.
 
 ---
 

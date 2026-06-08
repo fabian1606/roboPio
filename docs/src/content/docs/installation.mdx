@@ -20,25 +20,20 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
 
 <Steps>
 
-1. ### Repository klonen
+1. ### RobotLink-Bibliothek herunterladen
 
-   Lade den Quellcode von GitHub herunter:
+   Die neueste Version der Bibliothek als ZIP herunterladen:
 
-   ```bash
-   git clone https://github.com/YOUR_USER/roboPio
-   cd roboPio
-   ```
+   **[→ Zum neuesten Release auf GitHub](https://github.com/fabian1606/roboPio/releases/latest)**
 
-   Alternativ kann das Repository auch als ZIP heruntergeladen werden: **Code → Download ZIP**.
+   Dort die Datei `RobotLink-x.y.z.zip` herunterladen.
 
 2. ### RobotLink-Bibliothek installieren
-
-   Die Bibliothek `RobotLink` liegt als ZIP-Datei im Unterordner `lib/RobotLink/`.
 
    **In der Arduino IDE:**
 
    1. Menü: **Sketch → Bibliothek einbinden → .ZIP-Bibliothek hinzufügen…**
-   2. Im Dateiauswahl-Dialog zum Ordner `lib/RobotLink/` navigieren und die ZIP-Datei auswählen.
+   2. Die heruntergeladene `RobotLink-x.y.z.zip` auswählen.
    3. Die Arduino IDE bestätigt die Installation mit einer Erfolgsmeldung.
 
    <Aside type="tip">
@@ -71,36 +66,31 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
 
 5. ### Beispielprojekt öffnen
 
-   Die RobotLink-Bibliothek enthält fertige Beispiele für jeden Modus:
+   Die RobotLink-Bibliothek enthält fertige Beispiele für jeden Koordinatenmodus:
 
    **Arduino IDE:** Datei → Beispiele → RobotLink → gewünschtes Beispiel
 
-   | Beispiel | Modus |
-   |----------|-------|
-   | `SenderDirect` | Direkt-Modus |
-   | `SenderCylindrical` | Zylindrisch-Modus |
-   | `SenderCartesian` | Kartesisch-Modus |
+   | Beispiel | Koordinatenmodus |
+   |----------|-----------------|
+   | `SenderDirect` | Direkt (1:1 Poti → Servo) |
+   | `SenderCylindrical` | Zylindrisch (Basiswinkel, Elevation, Reichweite) |
+   | `SenderCartesian` | Kartesisch (X, Y, Z) |
 
    <Aside>
-     Die Beispiele sind vollständig lauffähig und müssen nur noch mit der korrekten MAC-Adresse des Empfängers konfiguriert werden (Schritt 7).
+     Der **Gruppenkanal** (LED-Farbe, 1–5) ist unabhängig vom Koordinatenmodus. Sender und Empfänger müssen auf demselben Kanal eingestellt sein. Der Kanal wird per Doppel-Reset gewechselt und bleibt im EEPROM gespeichert.
    </Aside>
 
 6. ### Empfänger einrichten (PlatformIO)
 
-   Der Empfänger wird als **PlatformIO**-Projekt bereitgestellt (Ordner `receiver/`):
+   Der Empfänger wird als **PlatformIO**-Projekt im roboPio-Repository bereitgestellt:
 
-   1. **VS Code** mit der PlatformIO-Erweiterung öffnen.
-   2. **Datei → Ordner öffnen…** → Ordner `receiver/` auswählen.
-   3. PlatformIO lädt automatisch alle Abhängigkeiten aus der `platformio.ini`.
-   4. Empfänger per USB anschließen und mit **PlatformIO: Upload** flashen.
-
-   ```ini
-   ; receiver/platformio.ini (Ausschnitt)
-   [env:esp32dev]
-   platform = espressif32
-   board = esp32dev
-   framework = arduino
+   ```bash
+   git clone https://github.com/fabian1606/roboPio
+   cd roboPio
+   pio run -e receiver -t upload
    ```
+
+   Alternativ in VS Code: PlatformIO-Erweiterung installieren, Ordner `roboPio/` öffnen, dann **PlatformIO: Upload**.
 
 7. ### MAC-Adresse ermitteln und eintragen
 
@@ -114,7 +104,6 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
    #include <WiFi.h>
    void setup() {
      Serial.begin(115200);
-     // MAC-Adresse des Empfängers ausgeben
      Serial.println(WiFi.macAddress());
    }
    void loop() {}
@@ -143,7 +132,7 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
 
    1. Empfänger einschalten (Servos anschließen, 5V-Versorgung sicherstellen).
    2. Sender (ESP32-S3) per USB mit Strom versorgen und den Sketch hochladen.
-   3. Die LED am Sender leuchtet in der Farbe des aktiven Modus (weiß = Modus 1).
+   3. Die LED am Sender leuchtet in der Farbe des aktiven Gruppenkanals (weiß = Kanal 1).
    4. Potentiometer drehen → Servos bewegen sich.
 
    Bei Problemen: Seriellen Monitor (115200 Baud) öffnen – RobotLink gibt Statusinformationen aus.

@@ -1,13 +1,13 @@
 ---
 title: Zylindrisch-Modus
 draft: false
-description: Modus 2 – Zylindrische Koordinaten (COORD_CYLINDRICAL). Steuerung per Basiswinkel, Elevation und Reichweite mit automatischer inverser Kinematik.
+description: Zylindrische Koordinaten (COORD_CYLINDRICAL). Steuerung per Basiswinkel, Elevation und Reichweite mit automatischer inverser Kinematik.
 ---
 
 import { Aside, Badge } from '@astrojs/starlight/components';
 import WokwiCircuit from '../../../components/WokwiCircuit.astro';
 
-<Badge text="Modus 2" variant="default" /> <Badge text="LED: Rot" variant="danger" />
+<Badge text="COORD_CYLINDRICAL" variant="default" />
 
 ## Übersicht
 
@@ -85,44 +85,45 @@ Der Empfänger unterstützt zwei Handgelenk-Verhaltensweisen, die in der Receive
 ```cpp
 #include <RobotLink.h>
 
-// GPIO-Pins für die Potentiometer
-// Belegung: Basis, Elevation, Reichweite, HG-Rotation, (frei), Greifer
-const uint8_t AXIS_PINS[6] = { 4, 7, 6, 5, 15, 16 };
+const int basePot    = 4;   // Achse 0 → Basis-Rotation ψ
+const int elevPot    = 7;   // Achse 1 → Elevation γ
+const int radiusPot  = 6;   // Achse 2 → Reichweite l
+const int wristPot   = 5;   // Achse 3 → Handgelenk-Rotation θ
+                            // Achse 4 → nicht verwendet
+const int gripperPot = 16;  // Achse 5 → Greifer
 
-// Glättungswerte pro Achse (0 = deaktiviert)
-const uint8_t SMOOTHING[6] = { 10, 10, 10, 10, 0, 10 };
+const int smoothing = 10;   // Glättungsstärke (0 = aus, 50 = stark)
 
 void setup() {
-  // Glättungsfilter initialisieren
-  for (int i = 0; i < 6; i++) {
-    if (SMOOTHING[i] > 0) {
-      robotLink.setAxisSmoothing(i, SMOOTHING[i]);
-    }
-  }
+  robotLink.setAxisSmoothing(0, smoothing);
+  robotLink.setAxisSmoothing(1, smoothing);
+  robotLink.setAxisSmoothing(2, smoothing);
+  robotLink.setAxisSmoothing(3, smoothing);
+  // Achse 4 unbenutzt – kein Smoothing nötig
+  robotLink.setAxisSmoothing(5, smoothing);
 
-  // Zylindrischen Koordinatenmodus aktivieren
   robotLink.setCoordMode(COORD_CYLINDRICAL);
-
-  // Sender starten (speichert Modus im EEPROM)
   robotLink.beginSender();
 }
 
 void loop() {
-  // Interne Aktualisierung (Glättung, Zeitgebung)
   robotLink.update();
 
-  // Potentiometer auslesen und Achswerte setzen
-  for (int i = 0; i < 6; i++) {
-    robotLink.setAxisValue(i, analogRead(AXIS_PINS[i]));
-  }
+  robotLink.setAxisValue(0, analogRead(basePot));
+  robotLink.setAxisValue(1, analogRead(elevPot));
+  robotLink.setAxisValue(2, analogRead(radiusPot));
+  robotLink.setAxisValue(3, analogRead(wristPot));
+  robotLink.setAxisValue(4, 0);  // unbenutzt
+  robotLink.setAxisValue(5, analogRead(gripperPot));
 
-  // Alle Achswerte per ESP-NOW senden
   robotLink.sendAllAxes();
-
-  // 20 ms Pause → ca. 50 Hz Updaterate
-  delay(20);
+  delay(20);  // 50 Hz
 }
 ```
+
+<Aside>
+  Der Gruppenkanal (LED-Farbe) ist unabhängig vom Koordinatenmodus. Sender und Empfänger müssen auf demselben Kanal sein – der Kanal wird per Doppel-Reset gewechselt.
+</Aside>
 
 ---
 
