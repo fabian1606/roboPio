@@ -114,7 +114,7 @@ void loop() {
 
 ### Glättungsfilter
 
-Der Glättungsparameter wendet einen gleitenden Durchschnitt auf die ADC-Werte an. Ein Wert von `10` bedeutet, dass der Durchschnitt der letzten 10 Messungen verwendet wird. Dies reduziert ADC-Rauschen und verhindert zitternde Servos.
+Der Glättungsparameter wendet eine **exponentielle Glättung** auf die ADC-Werte an (intern `SMOOTHED_EXPONENTIAL`). Höhere Werte glätten stärker: `1` bedeutet kaum Glättung, `50` sehr starke Glättung. Dies reduziert ADC-Rauschen und verhindert zitternde Servos.
 
 ```cpp
 // Stärkere Glättung für die Basis (größere Trägheit gewünscht)

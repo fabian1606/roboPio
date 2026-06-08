@@ -45,7 +45,7 @@ Der 2-Gelenk-IK-Löser des Empfängers verwendet folgende Längenmaße:
 | L2 | 135 mm | Unterarm (Ellbogen → Handgelenk) |
 | L3 | 165 mm | Handgelenksverlängerung (Handgelenk → Werkzeugspitze) |
 
-Der maximale Arm-Radius beträgt L1 + L2 + L3 = **415 mm**. Die praktisch sinnvolle Reichweite ist auf 240 mm begrenzt, um Singularitäten zu vermeiden.
+Die per Poti 2 gesteuerte Reichweite `l` ist die **Schulter→Handgelenk-Distanz** und wird auf 40–240 mm abgebildet – bewusst unter `L1 + L2` = 250 mm, damit das IK-Dreieck immer lösbar bleibt. Die Werkzeugverlängerung `L3` (165 mm) addiert sich danach zur tatsächlichen Reichweite der Werkzeugspitze.
 
 ---
 
@@ -129,25 +129,34 @@ void loop() {
 
 ## Funktionsweise der inversen Kinematik
 
-### Koordinatentransformation
+Im Zylindrisch-Modus steuert der Bediener **direkt** die Elevation γ (Poti 1) und die Reichweite l (Poti 2) – die Schulter→Handgelenk-Distanz. Eine Umrechnung in X/Y/Z findet **nicht** statt; die Basisrotation ψ (Poti 0) wird unverändert an Servo 1 durchgereicht.
 
-Der Empfänger wandelt die zylindrischen Koordinaten (ψ, γ, l) wie folgt in kartesische Koordinaten um:
+### 1. Innenwinkel des Dreiecks (Cosinus-Satz)
 
-```
-x = l · cos(ψ)
-y = l · sin(ψ)
-z = l · tan(γ)
-```
-
-### 2-Gelenk-IK-Löser
-
-Aus den kartesischen Koordinaten wird der Abstand `d` zur Armwurzel berechnet. Anschließend löst der Cosinus-Satz die Gelenkwinkel:
+Schulter, Ellbogen und Handgelenk bilden ein Dreieck mit den Seiten `L1`, `L2` und `l`. Der Cosinus-Satz liefert die beiden Innenwinkel:
 
 ```
-cos(θ_Ellbogen) = (d² - L1² - L2²) / (2 · L1 · L2)
-θ_Schulter     = atan2(z, r) - atan2(L2 · sin(θ_Ellbogen), L1 + L2 · cos(θ_Ellbogen))
+α = arccos( (L1² + L2² - l²) / (2 · L1 · L2) )   // Innenwinkel am Ellbogen
+φ = arccos( (L1² + l²  - L2²) / (2 · L1 · l ) )   // Innenwinkel an der Schulter
 ```
+
+### 2. Absolute Gelenkwinkel
+
+```
+β = φ + γ          // absoluter Schulterwinkel zur Horizontalen
+δ = β + α - π      // absoluter Unterarmwinkel zur Horizontalen
+```
+
+### 3. Servo-Winkel (mit mechanischen Null-Offsets)
+
+```
+Schulter (Servo 2) = β - π/2
+Ellbogen (Servo 3) = α - π/2
+Handgelenk (Servo 4) = θ4_abs - δ
+```
+
+Dabei hängt `θ4_abs` vom konfigurierten Handgelenk-Modus ab: `γ` bei `WRIST_PARALLEL_GAMMA`, `0` bei `WRIST_HORIZONTAL`.
 
 <Aside type="caution">
-  Liegt der Zielpunkt außerhalb des Arbeitsraums (l > L1 + L2), streckt der Empfänger den Arm maximal aus, ohne einen Fehler zu erzeugen. Der Arm erreicht den Zielpunkt dann nicht exakt.
+  Die Reichweite `l` wird auf den Bereich `rMin … rMax` (40–240 mm) abgebildet, der sicher unterhalb von `L1 + L2` = 250 mm liegt. Damit bleibt das Dreieck immer lösbar – der Cosinus-Term wird zusätzlich auf [-1, 1] begrenzt, sodass keine ungültigen Werte entstehen.
 </Aside>

@@ -51,6 +51,10 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
 
    Einfach den Bibliotheksnamen in die Suchleiste eingeben und auf **Installieren** klicken.
 
+   <Aside type="note">
+     Beim ZIP-Import bietet die Arduino IDE evtl. auch **SCServo** als Abhängigkeit an. Diese Bibliothek wird nur vom **Empfänger** (PlatformIO) benötigt – für den Sender ist sie nicht erforderlich, schadet aber auch nicht.
+   </Aside>
+
 4. ### Board-Einstellungen konfigurieren (Sender)
 
    Für den **Sender (ESP32-S3)** folgende Board-Einstellungen in der Arduino IDE wählen:
@@ -92,40 +96,32 @@ Diese Anleitung führt durch die komplette Einrichtung des roboPio-Projekts – 
 
    Alternativ in VS Code: PlatformIO-Erweiterung installieren, Ordner `roboPio/` öffnen, dann **PlatformIO: Upload**.
 
-7. ### MAC-Adresse ermitteln und eintragen
+7. ### Sender und Empfänger auf denselben Gruppenkanal stellen
 
-   ESP-NOW benötigt die MAC-Adresse des Empfängers. So geht man vor:
+   Eine **MAC-Adresse muss nicht eingetragen werden.** Der Sender überträgt
+   per Broadcast, und der Empfänger akzeptiert ein Frame nur dann, wenn
+   Sender und Empfänger auf demselben **Gruppenkanal (1–5)** stehen –
+   erkennbar an der **gleichen LED-Farbe**.
 
-   **Schritt A – MAC-Adresse des Empfängers auslesen:**
+   | Kanal | LED-Farbe |
+   |-------|-----------|
+   | 1 | Weiß |
+   | 2 | Rot |
+   | 3 | Grün |
+   | 4 | Blau |
+   | 5 | Magenta |
 
-   Folgenden Sketch kurz auf den Empfänger hochladen:
+   So gleichst du den Kanal ab:
 
-   ```cpp
-   #include <WiFi.h>
-   void setup() {
-     Serial.begin(115200);
-     Serial.println(WiFi.macAddress());
-   }
-   void loop() {}
-   ```
+   1. LED-Farbe von Sender und Empfänger vergleichen.
+   2. Stimmen sie nicht überein, auf einem der Boards den Kanal per
+      **Doppel-Reset** (zwei RST-Drücke innerhalb von 400 ms) weiterschalten,
+      bis beide dieselbe Farbe zeigen.
 
-   Die Ausgabe im Seriellen Monitor sieht z. B. so aus: `A4:CF:12:34:56:78`
-
-   **Schritt B – MAC-Adresse in den Sender eintragen:**
-
-   Im gewählten Sender-Sketch die Variable `peerMac` anpassen:
-
-   ```cpp
-   // MAC-Adresse des Empfängers (Beispiel – bitte anpassen!)
-   uint8_t peerMac[] = { 0xA4, 0xCF, 0x12, 0x34, 0x56, 0x78 };
-
-   void setup() {
-     robotLink.beginSender(peerMac);
-   }
-   ```
-
-   <Aside type="caution">
-     Die MAC-Adresse muss exakt übereinstimmen. Bei falscher Adresse werden keine Daten übertragen und die Servos reagieren nicht.
+   <Aside type="tip">
+     Dieses System ermöglicht, dass **mehrere Gruppen gleichzeitig** im selben
+     Raum arbeiten: Jedes Sender-Empfänger-Paar nutzt einen eigenen Kanal und
+     ignoriert die Frames der anderen Gruppen.
    </Aside>
 
 8. ### Ersten Test durchführen

@@ -131,21 +131,25 @@ z_eff = Z - L3 · sin(η)
 
 ### Schritt 3 – 2-Gelenk-Löser in der Sagittalebene
 
-Identisch zum zylindrischen Modus wird der Cosinus-Satz angewandt, um Schulter- und Ellbogenwinkel zu berechnen:
+Identisch zum zylindrischen Modus wird der Cosinus-Satz angewandt, um die Innenwinkel des Dreiecks Schulter–Ellbogen–Handgelenk zu berechnen:
 
 ```
 d = sqrt(r_eff² + z_eff²)
-cos(θ_Ellbogen) = (d² - L1² - L2²) / (2 · L1 · L2)
-θ_Schulter     = atan2(z_eff, r_eff) - atan2(L2 · sin(θ_Ellbogen), L1 + L2 · cos(θ_Ellbogen))
+α = arccos( (L1² + L2² - d²) / (2 · L1 · L2) )   // Innenwinkel am Ellbogen
+φ = arccos( (L1² + d²  - L2²) / (2 · L1 · d ) )   // Innenwinkel an der Schulter
+β = φ + atan2(z_eff, r_eff)                        // absoluter Schulterwinkel
+δ = β + α - π                                      // absoluter Unterarmwinkel
 ```
 
 ### Schritt 4 – Handgelenk-Kompensation
 
-Der Handgelenk-Neigungswinkel kompensiert Schulter- und Ellbogenwinkel, damit das Werkzeug die gewünschte absolute Neigung η beibehält:
+Der Handgelenk-Neigungswinkel kompensiert den Unterarmwinkel, damit das Werkzeug die gewünschte absolute Neigung η beibehält:
 
 ```
-θ_Handgelenk = η - θ_Schulter - θ_Ellbogen
+θ_Handgelenk = η - δ
 ```
+
+Die Servo-Winkel ergeben sich anschließend aus den mechanischen Null-Offsets: `Schulter = β - π/2`, `Ellbogen = α - π/2`.
 
 <Aside type="caution">
   **Singuläre Positionen:** Direkt über der Basis (X ≈ 0, Y ≈ 0) und am maximalen Ausstreckpunkt kann die IK numerisch instabil werden. In diesen Bereichen können abrupte Bewegungen auftreten. Es empfiehlt sich, diese Positionen im praktischen Betrieb zu vermeiden.
