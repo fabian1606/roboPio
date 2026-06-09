@@ -109,12 +109,13 @@ void setup() {
 void loop() {
   robotLink.update();
 
-  robotLink.setAxisValue(0, analogRead(basePot));
-  robotLink.setAxisValue(1, analogRead(elevPot));
-  robotLink.setAxisValue(2, analogRead(radiusPot));
-  robotLink.setAxisValue(3, analogRead(wristPot));
-  robotLink.setAxisValue(4, 0);  // unbenutzt
-  robotLink.setAxisValue(5, analogRead(gripperPot));
+  // Semantische Setter statt setAxisValue(index, …)
+  robotLink.setBaseRotation(analogRead(basePot));
+  robotLink.setElevation(analogRead(elevPot));
+  robotLink.setRadius(analogRead(radiusPot));
+  robotLink.setWrist(analogRead(wristPot));
+  robotLink.setAxisValue(4, 0);  // Achse 4 unbenutzt
+  robotLink.setGripper(analogRead(gripperPot));
 
   robotLink.sendAllAxes();
   delay(20);  // 50 Hz

@@ -26,6 +26,16 @@ enum CoordMode : uint8_t {
     COORD_CARTESIAN   = 2,  // (X, Y, Z, pitch, wrist, gripper) → IK
 };
 
+// ─── Runtime parameters ───────────────────────────────────────────────────────
+// Generic, low-rate parameters sent out-of-band from the axis stream (see
+// RobotParamFrame). Add future runtime-settable parameters here — the protocol,
+// persistence, and dispatch are written to scale to new IDs without changes.
+enum RobotParam : uint8_t {
+    PARAM_YAW_OFFSET = 0,  // float, rad — rotation of the cartesian frame about Z
+    PARAM_MAX_SPEED  = 1,  // servo speed units (steps/s); 0 = max/unbegrenzt
+    PARAM_COUNT            // keep last — number of parameters
+};
+
 // ─── Kinematics (receiver-side) ───────────────────────────────────────────────
 
 struct JointLimits { int minPos; int maxPos; };
@@ -34,6 +44,15 @@ struct JointLimits { int minPos; int maxPos; };
 enum WristMode : uint8_t {
     WRIST_PARALLEL_GAMMA = 0,  // L3 zeigt entlang Elevations-Linie (radial)
     WRIST_HORIZONTAL     = 1,  // L3 bleibt waagerecht, unabhängig von γ
+};
+
+// Behaviour when a cartesian target cannot be reached within the limits.
+enum CartesianLimitMode : uint8_t {
+    CART_LIMIT_CLAMP   = 0,  // pro Gelenk klemmen — Arm fährt so nah wie möglich
+                             //   und bleibt am Anschlag stehen (Default, kann Pose verzerren)
+    CART_LIMIT_HOLD    = 1,  // letzte gültige Pose halten, sobald ein Gelenk anschlägt
+    CART_LIMIT_PROJECT = 2,  // Ziel auf nächsten erreichbaren Punkt projizieren
+                             //   (Reichweite begrenzt, Richtung/Pitch bleiben erhalten)
 };
 
 // Configuration for cylindrical IK.
@@ -60,6 +79,7 @@ struct KinematicsConfig {
     float yMin, yMax;          // Y range in mm  (links/rechts)
     float zMin, zMax;          // Z range in mm  (hoch/runter)
     float pitchMin, pitchMax;  // Tool-Pitch η range in rad (0 = horizontal)
+    CartesianLimitMode cartLimitMode;  // Verhalten bei unerreichbarem Ziel (Default: CLAMP)
 };
 
 // ─── Frame (all axes in one packet, 12-bit packed) ───────────────────────────
@@ -97,6 +117,24 @@ inline void robotFrameUnpack(const RobotFrame& f, uint16_t v[6]) {
     v[5] = ((uint16_t)(f.packed[7] & 0x0F) << 8) | f.packed[8];
 }
 
+// ─── Parameter frame (out-of-band runtime parameters) ─────────────────────────
+// A second, shorter packet carrying a single (paramID, value) pair. It is told
+// apart from RobotFrame purely by length (9 ≠ 11 bytes) plus a marker byte.
+// Sent at low rate (only on change), so the float payload costs nothing in the
+// normal axis stream.
+#define ROBOTLINK_PARAM_MARKER  0xA5   // type discriminator for RobotParamFrame
+
+struct RobotParamFrame {
+    uint8_t  receiverID;   // bits[2:0] = target mode (same filter as RobotFrame)
+    uint8_t  marker;       // ROBOTLINK_PARAM_MARKER — guards against length collisions
+    uint8_t  paramID;      // RobotParam
+    uint8_t  reserved;     // padding / future flags
+    float    value;        // parameter payload
+    uint8_t  checksum;     // XOR over all bytes except checksum
+} __attribute__((packed)); // 9 bytes total
+static_assert(sizeof(RobotParamFrame) != sizeof(RobotFrame),
+              "param frame must differ in size from axis frame for len-based routing");
+
 // ─── Callback ─────────────────────────────────────────────────────────────────
 
 // Called on the receiver when a valid frame arrives.
@@ -129,8 +167,40 @@ public:
     // Push a raw sensor value. Smoothing (if configured) is applied internally.
     void setAxisValue(uint8_t axisIndex, uint16_t value);
 
+    // ── Semantic axis setters ──────────────────────────────────────────────
+    // Thin, self-documenting wrappers around setAxisValue() with the fixed axis
+    // index for each mode. All take a raw 0–4095 value (e.g. analogRead()); the
+    // mapping to mm / radians happens on the receiver (KinematicsConfig).
+
+    // COORD_CARTESIAN — (X, Y, Z, pitch, wrist-rotate, gripper)
+    void setX(uint16_t v)           { setAxisValue(0, v); }  // vorne/hinten
+    void setY(uint16_t v)           { setAxisValue(1, v); }  // links/rechts
+    void setZ(uint16_t v)           { setAxisValue(2, v); }  // hoch/runter
+    void setPitch(uint16_t v)       { setAxisValue(3, v); }  // Werkzeug-Neigung η
+    void setWristRotate(uint16_t v) { setAxisValue(4, v); }  // Handgelenk-Rotation
+
+    // COORD_CYLINDRICAL — (base-rot, elevation, radius, wrist, –, gripper)
+    void setBaseRotation(uint16_t v){ setAxisValue(0, v); }  // Basisdrehung
+    void setElevation(uint16_t v)   { setAxisValue(1, v); }  // Elevationswinkel
+    void setRadius(uint16_t v)      { setAxisValue(2, v); }  // Ein-/Ausfahren
+    void setWrist(uint16_t v)       { setAxisValue(3, v); }  // Handgelenk
+
+    // Shared (axis 5 in both modes)
+    void setGripper(uint16_t v)     { setAxisValue(5, v); }  // Greifer
+
     // Send all axis values in a single ESP-NOW frame.
     void sendAllAxes();
+
+    // Send a single runtime parameter to the receiver (out-of-band, low rate).
+    // Use for values that are set/calibrated rather than streamed every frame,
+    // e.g. PARAM_YAW_OFFSET. The receiver persists it across resets.
+    // Call only on change to keep the radio quiet.
+    void sendParam(RobotParam param, float value);
+
+    // Set the maximum servo speed (target velocity) applied to all servos.
+    // Units are SMS-STS speed steps/s; 0 = unbegrenzt (maximale Geschwindigkeit).
+    // Persisted on the receiver. Convenience wrapper around sendParam().
+    void setMaxSpeed(uint16_t speed) { sendParam(PARAM_MAX_SPEED, (float)speed); }
 
     // ── Receiver ─────────────────────────────────────────────────────────────
 
@@ -155,6 +225,10 @@ public:
 
     // Updates only the LED without touching Preferences.
     void setModeLED(uint8_t mode);
+
+    // Returns the current value of a runtime parameter (receiver-side).
+    // Reflects the last value received and persisted (or the loaded default).
+    float getParam(RobotParam param) const;
 
     // Brief LED override; auto-restores to mode color after durationMs.
     void flashAttention(CRGB color = CRGB(255, 0, 0), uint16_t durationMs = 150);
@@ -188,6 +262,19 @@ private:
     volatile CoordMode _rxCoordMode  = COORD_DIRECT;
     bool               _hasKinematics = false;
     KinematicsConfig   _kin          = {};
+
+    // Runtime parameters (receiver-side), persisted in Preferences.
+    float              _params[PARAM_COUNT] = {};
+    // Parameter RX hand-off from the ESP-NOW callback to update().
+    volatile bool      _hasParam     = false;
+    volatile uint8_t   _rxParamID    = 0;
+    volatile float     _rxParamValue = 0.0f;
+    void   _loadParams();
+    void   _applyParam(uint8_t paramID, float value);  // store + persist
+
+    // Last valid cartesian servo output, for CART_LIMIT_HOLD.
+    mutable uint16_t   _lastCartOut[ROBOTLINK_NUM_AXES] = {};
+    mutable bool       _lastCartValid = false;
 
     // Applies cylindrical IK to raw values, writes servo-normalised output.
     void _applyCylindricalIK(const uint16_t raw[6], uint16_t out[6]) const;

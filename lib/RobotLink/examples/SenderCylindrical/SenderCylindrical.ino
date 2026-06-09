@@ -46,18 +46,23 @@ void setup() {
     if (!robotLink.beginSender()) {
         Serial.println("[Sender] FEHLER: ESP-NOW konnte nicht gestartet werden");
     }
+
+    // Maximalgeschwindigkeit der Servos (0 = max; z.B. 1500 für sanftere
+    // Bewegungen). Wird am Empfänger dauerhaft gespeichert.
+    robotLink.setMaxSpeed(0);
+
     Serial.printf("[Sender] Zylindrisch — Modus %d\n", robotLink.getMode());
 }
 
 void loop() {
     robotLink.update();  // polls mode button
 
-    robotLink.setAxisValue(0, analogRead(basePot));
-    robotLink.setAxisValue(1, analogRead(elevPot));
-    robotLink.setAxisValue(2, analogRead(radiusPot));
-    robotLink.setAxisValue(3, analogRead(wristPot));
-    robotLink.setAxisValue(4, 0);  // unbenutzt
-    robotLink.setAxisValue(5, analogRead(gripperPot));
+    robotLink.setBaseRotation(analogRead(basePot));
+    robotLink.setElevation(analogRead(elevPot));
+    robotLink.setRadius(analogRead(radiusPot));
+    robotLink.setWrist(analogRead(wristPot));
+    robotLink.setAxisValue(4, 0);  // Achse 4 unbenutzt
+    robotLink.setGripper(analogRead(gripperPot));
 
     Serial.printf("[Elev] %4d  [Rad] %4d\n",
                   analogRead(elevPot), analogRead(radiusPot));

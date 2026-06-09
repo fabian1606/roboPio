@@ -6,7 +6,6 @@
 // Waveshare "Servo Driver with ESP32" servo bus UART pins (from schematic)
 #define SERVO_RXD  18
 #define SERVO_TXD  19
-#define SERVO_SPEED 0    // 0 = max speed
 #define SERVO_ACC   50   // gentle acceleration to reduce mechanical jerk
 
 // Minimum change in servo units before a new command is issued.
@@ -67,6 +66,11 @@ static const KinematicsConfig KINEMATICS = {
     .yMin = -200.0f, .yMax = 200.0f,    // mm — links/rechts
     .zMin = -100.0f, .zMax = 300.0f,    // mm — hoch/runter
     .pitchMin = -1.5708f, .pitchMax = 1.5708f,  // rad — -90°…+90°, Center = 0 (horizontal)
+    // Verhalten bei unerreichbarem Ziel:
+    //   CART_LIMIT_CLAMP   = pro Gelenk klemmen, so nah wie möglich heranfahren (Default)
+    //   CART_LIMIT_HOLD    = letzte gültige Pose halten
+    //   CART_LIMIT_PROJECT = auf nächsten erreichbaren Punkt projizieren
+    .cartLimitMode = CART_LIMIT_CLAMP,
 };
 
 static const uint8_t SERVO_IDS[6] = {1, 2, 3, 4, 5, 6};
@@ -97,6 +101,10 @@ void onFrame(uint8_t /*receiverID*/, const uint16_t values[6]) {
     u8  accs[6];
     u8  count = 0;
 
+    // Runtime max-speed limit (0 = max/unbegrenzt, der Default). Set via the
+    // sender's setMaxSpeed() and persisted on this board.
+    u16 maxSpeed = (u16)robotLink.getParam(PARAM_MAX_SPEED);
+
     for (int i = 0; i < 6; i++) {
         int pos = map((int)values[i], 0, 4095,
                       LIMITS[i].minPos, LIMITS[i].maxPos);
@@ -120,7 +128,7 @@ void onFrame(uint8_t /*receiverID*/, const uint16_t values[6]) {
         if (abs(pos - lastSentPos[i]) >= SERVO_DEADBAND) {
             ids[count]       = SERVO_IDS[i];
             positions[count] = (s16)pos;
-            speeds[count]    = SERVO_SPEED;
+            speeds[count]    = maxSpeed;
             accs[count]      = SERVO_ACC;
             lastSentPos[i]   = pos;
             count++;

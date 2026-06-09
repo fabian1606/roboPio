@@ -12,6 +12,12 @@
 //   wristPot   (GPIO 15) → Achse 4 → Wrist-Rotate (Servo 5, direkt)
 //   gripperPot (GPIO 16) → Achse 5 → Greifer      (Servo 6, direkt)
 //
+//   yawPot     (GPIO  3) → Parameter PARAM_YAW_OFFSET (Drehung des
+//                           Koordinatensystems um Z, ±90°). Wird NICHT als
+//                           Achse, sondern als Laufzeit-Parameter gesendet
+//                           (nur bei Änderung) und im Receiver dauerhaft
+//                           gespeichert. Pin frei wählbar (ADC-fähig).
+//
 // Die Kinematik (IK) läuft auf dem Receiver — dieser Sender schickt nur
 // die rohen Poti-Werte. CoordMode wird im Frame mitgesendet.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,9 +28,20 @@ const int zPot       = 6;   // Achse 2 → Z (hoch/runter)
 const int pitchPot   = 5;   // Achse 3 → Tool-Pitch
 const int wristPot   = 15;  // Achse 4 → Wrist-Rotate
 const int gripperPot = 16;  // Achse 5 → Greifer
+const int yawPot     = 3;   // Parameter → Yaw-Offset (Koordinatensystem-Drehung)
 
 // Smoothing-Stärke (0 = aus, 1 = kaum, 50 = stark)
 const int smoothing = 10;
+
+// Yaw-Bereich (rad) über den Poti-Hub 0…4095.
+const float yawMin = -1.5708f;  // -90°
+const float yawMax =  1.5708f;  // +90°
+
+// Letzter gesendeter Yaw-Wert + Sende-Schwelle (rad), damit nur bei echter
+// Änderung gefunkt wird (hält die Funkstrecke ruhig).
+float yawLast      = 0.0f;
+bool  yawInit      = false;
+const float yawEps = 0.02f;  // ~1.1°
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -45,18 +62,32 @@ void setup() {
     if (!robotLink.beginSender()) {
         Serial.println("[Sender] FEHLER: ESP-NOW konnte nicht gestartet werden");
     }
+
+    // Maximalgeschwindigkeit der Servos (0 = max; z.B. 1500 für sanftere
+    // Bewegungen). Wird am Empfänger dauerhaft gespeichert.
+    robotLink.setMaxSpeed(0);
+
     Serial.printf("[Sender] Kartesisch — Modus %d\n", robotLink.getMode());
 }
 
 void loop() {
     robotLink.update();  // polls mode button
 
-    robotLink.setAxisValue(0, analogRead(xPot));
-    robotLink.setAxisValue(1, analogRead(yPot));
-    robotLink.setAxisValue(2, analogRead(zPot));
-    robotLink.setAxisValue(3, analogRead(pitchPot));
-    robotLink.setAxisValue(4, analogRead(wristPot));
-    robotLink.setAxisValue(5, analogRead(gripperPot));
+    robotLink.setX(analogRead(xPot));
+    robotLink.setY(analogRead(yPot));
+    robotLink.setZ(analogRead(zPot));
+    robotLink.setPitch(analogRead(pitchPot));
+    robotLink.setWristRotate(analogRead(wristPot));
+    robotLink.setGripper(analogRead(gripperPot));
+
+    // ── Yaw-Offset als Laufzeit-Parameter (nur bei Änderung senden) ──────────
+    float yaw = yawMin + (analogRead(yawPot) / 4095.0f) * (yawMax - yawMin);
+    if (!yawInit || fabsf(yaw - yawLast) > yawEps) {
+        robotLink.sendParam(PARAM_YAW_OFFSET, yaw);
+        yawLast = yaw;
+        yawInit = true;
+        Serial.printf("[Yaw] %.1f°\n", yaw * 180.0f / PI);
+    }
 
     Serial.printf("[X] %4d [Y] %4d [Z] %4d [Pitch] %4d\n",
                   analogRead(xPot), analogRead(yPot),

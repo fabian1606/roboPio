@@ -160,25 +160,64 @@ void RobotLink::sendAllAxes() {
     esp_now_send(_peerMac, (uint8_t*)&frame, sizeof(frame));
 }
 
+// XOR over all bytes of a param frame except the trailing checksum byte.
+static uint8_t _calcParamChecksum(const RobotParamFrame& f) {
+    const uint8_t* p = (const uint8_t*)&f;
+    uint8_t cs = 0;
+    for (size_t i = 0; i < sizeof(RobotParamFrame) - 1; i++) cs ^= p[i];
+    return cs;
+}
+
+void RobotLink::sendParam(RobotParam param, float value) {
+    RobotParamFrame pf;
+    pf.receiverID = _mode & 0x07;
+    pf.marker     = ROBOTLINK_PARAM_MARKER;
+    pf.paramID    = (uint8_t)param;
+    pf.reserved   = 0;
+    pf.value      = value;
+    pf.checksum   = _calcParamChecksum(pf);
+    esp_now_send(_peerMac, (uint8_t*)&pf, sizeof(pf));
+}
+
 // ─── Receiver ─────────────────────────────────────────────────────────────────
 
 void RobotLink::_onReceive(const esp_now_recv_info_t* /*info*/,
                             const uint8_t* data, int len) {
-    if (!_instance || len != (int)sizeof(RobotFrame)) return;
+    if (!_instance) return;
 
-    RobotFrame frame;
-    memcpy(&frame, data, sizeof(frame));
+    // ── Axis frame ───────────────────────────────────────────────────────────
+    if (len == (int)sizeof(RobotFrame)) {
+        RobotFrame frame;
+        memcpy(&frame, data, sizeof(frame));
 
-    if (_calcChecksum(frame) != frame.checksum) return;
+        if (_calcChecksum(frame) != frame.checksum) return;
 
-    uint8_t id     = frame.receiverID & 0x07;
-    CoordMode cmode = (CoordMode)(frame.receiverID >> 3);
+        uint8_t id     = frame.receiverID & 0x07;
+        CoordMode cmode = (CoordMode)(frame.receiverID >> 3);
 
-    if (id != _instance->_mode) return;
+        if (id != _instance->_mode) return;
 
-    _instance->_rxBuf       = frame;
-    _instance->_rxCoordMode = cmode;
-    _instance->_hasFrame    = true;
+        _instance->_rxBuf       = frame;
+        _instance->_rxCoordMode = cmode;
+        _instance->_hasFrame    = true;
+        return;
+    }
+
+    // ── Parameter frame ──────────────────────────────────────────────────────
+    if (len == (int)sizeof(RobotParamFrame)) {
+        RobotParamFrame pf;
+        memcpy(&pf, data, sizeof(pf));
+
+        if (pf.marker != ROBOTLINK_PARAM_MARKER)        return;
+        if (_calcParamChecksum(pf) != pf.checksum)      return;
+        if ((pf.receiverID & 0x07) != _instance->_mode) return;
+        if (pf.paramID >= PARAM_COUNT)                  return;
+
+        _instance->_rxParamID    = pf.paramID;
+        _instance->_rxParamValue = pf.value;
+        _instance->_hasParam     = true;
+        return;
+    }
 }
 
 bool RobotLink::beginReceiver(RobotFrameCallback cb) {
@@ -187,6 +226,7 @@ bool RobotLink::beginReceiver(RobotFrameCallback cb) {
 
     _initLED();
     _loadMode(false);
+    _loadParams();
     _showRoleAnimation(false);
     setModeLED(_mode);
 
@@ -198,6 +238,45 @@ bool RobotLink::beginReceiver(RobotFrameCallback cb) {
 
     esp_now_register_recv_cb(_onReceive);
     return true;
+}
+
+// ─── Runtime parameters (receiver-side) ────────────────────────────────────────
+
+// Preferences key per parameter. Short keys (NVS limit 15 chars).
+static const char* _paramKey(uint8_t paramID) {
+    switch (paramID) {
+        case PARAM_YAW_OFFSET: return "p_yaw";
+        case PARAM_MAX_SPEED:  return "p_speed";
+        default:               return nullptr;
+    }
+}
+
+void RobotLink::_loadParams() {
+    Preferences prefs;
+    prefs.begin("robotlink", true);  // read-only
+    for (uint8_t i = 0; i < PARAM_COUNT; i++) {
+        const char* key = _paramKey(i);
+        if (key) _params[i] = prefs.getFloat(key, 0.0f);
+    }
+    prefs.end();
+}
+
+void RobotLink::_applyParam(uint8_t paramID, float value) {
+    if (paramID >= PARAM_COUNT) return;
+    _params[paramID] = value;
+    const char* key = _paramKey(paramID);
+    if (key) {
+        Preferences prefs;
+        prefs.begin("robotlink", false);
+        prefs.putFloat(key, value);
+        prefs.end();
+    }
+    Serial.printf("[RobotLink] Param %u = %.4f (persisted)\n", paramID, value);
+}
+
+float RobotLink::getParam(RobotParam param) const {
+    if ((uint8_t)param >= PARAM_COUNT) return 0.0f;
+    return _params[param];
 }
 
 void RobotLink::_checkModeButton() {
@@ -331,15 +410,32 @@ void RobotLink::_applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const 
     float eta = _kin.pitchMin + (raw[3] / 4095.0f) * (_kin.pitchMax - _kin.pitchMin);
 
     // ── Base rotation + projection into arm plane ───────────────────────────
-    float psi = atan2f(Y, X);
+    // Add the runtime yaw offset → rotates the whole cartesian frame about Z.
+    // Only the base angle changes; the horizontal radius r is rotation-invariant.
+    float psi = atan2f(Y, X) + _params[PARAM_YAW_OFFSET];
     float r   = sqrtf(X*X + Y*Y);
 
     // ── Wrist position (back-step L3 along tool-pitch direction) ────────────
     float Wr = r - L3 * cosf(eta);
     float Wz = Z - L3 * sinf(eta);
 
-    // ── 2-link inner angles + shoulder/elbow ────────────────────────────────
+    // ── 2-link reach check ───────────────────────────────────────────────────
     float l     = sqrtf(Wr*Wr + Wz*Wz);
+    const float reachLo = fabsf(a - b);   // closest reachable shoulder→wrist distance
+    const float reachHi = a + b;          // farthest reachable distance
+    bool clamped = (l > reachHi) || (l < reachLo);
+
+    // CART_LIMIT_PROJECT: pull the wrist target onto the reachable annulus along
+    // the same direction, so the pose stays geometrically consistent.
+    if (clamped && _kin.cartLimitMode == CART_LIMIT_PROJECT && l > 1e-3f) {
+        const float eps = 0.5f;  // stay just inside the boundary to avoid singularities
+        float target = (l > reachHi) ? (reachHi - eps) : (reachLo + eps);
+        float s = target / l;
+        Wr *= s;
+        Wz *= s;
+        l   = target;
+    }
+
     float gamma = atan2f(Wz, Wr);
 
     float cosA = (a*a + b*b - l*l) / (2.0f * a * b);
@@ -367,13 +463,18 @@ void RobotLink::_applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const 
                   alpha * 180.0f / (float)M_PI,
                   theta4_rel * 180.0f / (float)M_PI);
 
+    // Maps a joint angle to a normalised servo value, clamping to hardware
+    // limits. Sets `clamped` when the requested angle lay outside the limits.
     auto angleToNorm = [&](int jointIdx, float theta) -> uint16_t {
         float pos_f = _kin.jointZeroPos[jointIdx] + theta * _kin.jointScale[jointIdx];
         int   pos   = (int)pos_f;
-        pos = constrain(pos, _kin.limits[jointIdx].minPos, _kin.limits[jointIdx].maxPos);
-        int range = _kin.limits[jointIdx].maxPos - _kin.limits[jointIdx].minPos;
+        int   lo    = _kin.limits[jointIdx].minPos;
+        int   hi    = _kin.limits[jointIdx].maxPos;
+        if (pos < lo || pos > hi) clamped = true;
+        pos = constrain(pos, lo, hi);
+        int range = hi - lo;
         if (range <= 0) return 2047;
-        int norm = (int)(((float)(pos - _kin.limits[jointIdx].minPos) / (float)range) * 4095.0f);
+        int norm = (int)(((float)(pos - lo) / (float)range) * 4095.0f);
         return (uint16_t)constrain(norm, 0, 4095);
     };
 
@@ -383,6 +484,19 @@ void RobotLink::_applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const 
     out[3] = angleToNorm(3, thetaWrist);
     out[4] = raw[4];
     out[5] = raw[5];
+
+    // ── Limit behaviour ──────────────────────────────────────────────────────
+    if (_kin.cartLimitMode == CART_LIMIT_HOLD && clamped && _lastCartValid) {
+        // Target unreachable → freeze the whole arm at the last valid pose.
+        memcpy(out, _lastCartOut, sizeof(_lastCartOut));
+        return;
+    }
+    // CLAMP / PROJECT (and HOLD while still reachable): remember this pose as the
+    // last valid one when nothing was clamped.
+    if (!clamped) {
+        memcpy(_lastCartOut, out, sizeof(_lastCartOut));
+        _lastCartValid = true;
+    }
 }
 
 // ─── update() ─────────────────────────────────────────────────────────────────
@@ -393,6 +507,13 @@ void RobotLink::update() {
         _flashUntilMs = 0;
     }
     _checkModeButton();
+
+    // Drain any pending runtime parameter (set + persist, off the ISR path).
+    if (_hasParam) {
+        _hasParam = false;
+        _applyParam(_rxParamID, _rxParamValue);
+    }
+
     if (!_hasFrame) return;
     _hasFrame = false;
     if (!_callback) return;

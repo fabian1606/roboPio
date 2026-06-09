@@ -45,6 +45,69 @@ Das Koordinatensystem ist wie folgt definiert:
 - **Y-Achse** – seitliche Richtung (links = negativ, rechts = positiv)
 - **Z-Achse** – vertikale Richtung (oben = positiv)
 
+### Ausrichtung drehen (Yaw-Offset)
+
+Das gesamte Koordinatensystem lässt sich **zur Laufzeit um die Z-Achse drehen** – damit
+verschiebt sich die Ausrichtung der X-/Y-Achse, ohne neu zu flashen. Mathematisch wird
+lediglich ein Offset zum Basiswinkel addiert:
+
+```
+ψ = atan2(Y, X) + yawOffset
+```
+
+Der horizontale Radius `r = sqrt(X² + Y²)` bleibt dabei unverändert – eine Drehung um Z
+verändert nur die Blickrichtung des Frames.
+
+Der Wert wird als **Laufzeit-Parameter** `PARAM_YAW_OFFSET` über einen separaten
+Funk-Kanal vom Sender zum Empfänger geschickt (nur bei Änderung) und dort **dauerhaft im
+Flash gespeichert** (übersteht Resets). Die sechs Achs-Frames bleiben davon unberührt.
+
+```cpp
+// Sender: Yaw-Winkel (rad) setzen – z. B. aus einem zusätzlichen Poti
+robotLink.sendParam(PARAM_YAW_OFFSET, yaw);
+
+// Empfänger: aktuellen Wert auslesen
+float yaw = robotLink.getParam(PARAM_YAW_OFFSET);
+```
+
+<Aside>
+  Der Parameter-Kanal (`RobotParamFrame`) ist generisch: Weitere Laufzeit-Parameter lassen
+  sich durch Ergänzen des `RobotParam`-Enums hinzufügen, ohne das Achs-Protokoll zu ändern.
+</Aside>
+
+### Maximalgeschwindigkeit
+
+Über denselben Parameter-Kanal lässt sich die **maximale Servo-Geschwindigkeit** setzen
+(gilt modusübergreifend für alle Servos). Die Einheit sind SMS-STS-Geschwindigkeitsschritte;
+**`0` = unbegrenzt** (maximale Geschwindigkeit, Standard). Kleinere Werte ergeben sanftere,
+langsamere Bewegungen. Der Wert wird am Empfänger dauerhaft gespeichert.
+
+```cpp
+robotLink.setMaxSpeed(0);      // 0 = max (Standard)
+robotLink.setMaxSpeed(1500);   // langsamer / sanfter
+```
+
+---
+
+## Verhalten an den Grenzen
+
+Wenn eine angeforderte Position **außerhalb des erreichbaren Arbeitsraums oder der
+Gelenk-Limits** liegt, bestimmt das Feld `cartLimitMode` in `KinematicsConfig`
+(Empfänger-Seite), wie der Arm reagiert:
+
+| Modus | Verhalten |
+|-------|-----------|
+| `CART_LIMIT_CLAMP` | **Standard.** Jedes Gelenk klemmt einzeln an seinem Limit – der Arm fährt so nah wie möglich heran und bleibt am Anschlag stehen. Kann die Pose verzerren. |
+| `CART_LIMIT_HOLD` | Sobald ein Gelenk anschlagen würde, hält der Arm die **letzte gültige Pose** statt einer verzerrten Stellung. |
+| `CART_LIMIT_PROJECT` | Das Ziel wird auf den **nächstgelegenen erreichbaren Punkt** projiziert: die Reichweite wird begrenzt, Richtung und Werkzeug-Neigung bleiben erhalten. |
+
+```cpp
+// Empfänger: in der KinematicsConfig setzen
+KinematicsConfig kin = { /* … */ };
+kin.cartLimitMode = CART_LIMIT_CLAMP;   // oder _HOLD / _PROJECT
+robotLink.setKinematics(kin);
+```
+
 ---
 
 ## Schaltplan
@@ -92,12 +155,13 @@ void setup() {
 void loop() {
   robotLink.update();
 
-  robotLink.setAxisValue(0, analogRead(xPot));
-  robotLink.setAxisValue(1, analogRead(yPot));
-  robotLink.setAxisValue(2, analogRead(zPot));
-  robotLink.setAxisValue(3, analogRead(pitchPot));
-  robotLink.setAxisValue(4, analogRead(wristPot));
-  robotLink.setAxisValue(5, analogRead(gripperPot));
+  // Semantische Setter statt setAxisValue(index, …)
+  robotLink.setX(analogRead(xPot));
+  robotLink.setY(analogRead(yPot));
+  robotLink.setZ(analogRead(zPot));
+  robotLink.setPitch(analogRead(pitchPot));
+  robotLink.setWristRotate(analogRead(wristPot));
+  robotLink.setGripper(analogRead(gripperPot));
 
   robotLink.sendAllAxes();
   delay(20);  // 50 Hz
@@ -114,10 +178,11 @@ void loop() {
 
 ### Schritt 1 – Basiswinkel
 
-Der Basiswinkel ergibt sich direkt aus den X- und Y-Koordinaten:
+Der Basiswinkel ergibt sich aus den X- und Y-Koordinaten plus dem optionalen
+[Yaw-Offset](#ausrichtung-drehen-yaw-offset):
 
 ```
-ψ = atan2(Y, X)
+ψ = atan2(Y, X) + yawOffset
 ```
 
 ### Schritt 2 – Planare Reichweite
