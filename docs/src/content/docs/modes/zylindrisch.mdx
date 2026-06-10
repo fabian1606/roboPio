@@ -17,6 +17,7 @@ Im **Zylindrisch-Modus** (`COORD_CYLINDRICAL`) wird der Roboterarm in **zylindri
 - **Elevation γ** – Neigungswinkel des Arms nach oben/unten
 - **Reichweite l** – horizontale Streckung des Arms (Abstand Basis–Werkzeug)
 - **Handgelenk-Rotation θ** – Drehung des Werkzeugs um seine eigene Achse
+- **Werkzeug-Pitch η** – frei einstellbarer Kippwinkel des Werkzeugs (–90° – +90°)
 
 Der Empfänger berechnet automatisch die benötigten Gelenkwinkel für Schulter und Ellbogen mittels eines **2-Gelenk-IK-Lösers**.
 
@@ -30,7 +31,7 @@ Der Empfänger berechnet automatisch die benötigten Gelenkwinkel für Schulter 
 | 1 | 7 | Elevation γ | 0° – 80° |
 | 2 | 6 | Reichweite l | 40 – 240 mm |
 | 3 | 5 | Handgelenk-Rotation θ | 0° – 360° |
-| 4 | 15 | — (nicht verwendet) | — |
+| 4 | 15 | Werkzeug-Pitch η | –90° – +90° |
 | 5 | 16 | Greifer | 0 – 100 % |
 
 ---
@@ -49,9 +50,16 @@ Die per Poti 2 gesteuerte Reichweite `l` ist die **Schulter→Handgelenk-Distanz
 
 ---
 
-## Handgelenk-Modi
+## Handgelenk-Pitch
 
-Der Empfänger unterstützt zwei Handgelenk-Verhaltensweisen, die in der Receiver-Firmware konfiguriert werden:
+Der Werkzeug-Kippwinkel (Servo 4) kann auf zwei Arten bestimmt werden – gesteuert über das Flag `cylUsePitchAxis` in der Receiver-Firmware:
+
+| `cylUsePitchAxis` | Verhalten |
+|-------------------|-----------|
+| `true` (Standard) | **Achse 4 gibt den Pitch η frei vor** – der Bediener stellt den absoluten Werkzeug-Kippwinkel (`pitchMin … pitchMax`, standardmäßig –90° … +90°) direkt per Poti ein. |
+| `false` | Fallback auf die statische `WristMode`-Logik (siehe unten) – Achse 4 wird ignoriert. |
+
+### Fallback: statische Handgelenk-Modi (`cylUsePitchAxis = false`)
 
 | Modus | Konstante | Beschreibung |
 |-------|-----------|--------------|
@@ -69,13 +77,13 @@ Der Empfänger unterstützt zwei Handgelenk-Verhaltensweisen, die in der Receive
     { gpio: 7,  label: 'Elevation γ' },
     { gpio: 6,  label: 'Reichweite l' },
     { gpio: 5,  label: 'HG-Rotation θ' },
-    { gpio: 15, label: '(nicht belegt)' },
+    { gpio: 15, label: 'Werkzeug-Pitch η' },
     { gpio: 16, label: 'Greifer' },
   ]}
 />
 
 <Aside type="note">
-  GPIO 15 (Achse 4) ist in diesem Modus nicht belegt. Das zugehörige Potentiometer kann trotzdem angeschlossen sein, der Wert wird vom Empfänger ignoriert.
+  GPIO 15 (Achse 4) steuert den Werkzeug-Pitch η. Ist in der Receiver-Firmware `cylUsePitchAxis = false` gesetzt, wird dieser Wert ignoriert und der Kippwinkel stattdessen aus dem konfigurierten `WristMode` abgeleitet.
 </Aside>
 
 ---
@@ -89,7 +97,7 @@ const int basePot    = 4;   // Achse 0 → Basis-Rotation ψ
 const int elevPot    = 7;   // Achse 1 → Elevation γ
 const int radiusPot  = 6;   // Achse 2 → Reichweite l
 const int wristPot   = 5;   // Achse 3 → Handgelenk-Rotation θ
-                            // Achse 4 → nicht verwendet
+const int pitchPot   = 15;  // Achse 4 → Werkzeug-Pitch η
 const int gripperPot = 16;  // Achse 5 → Greifer
 
 const int smoothing = 10;   // Glättungsstärke (0 = aus, 50 = stark)
@@ -99,7 +107,7 @@ void setup() {
   robotLink.setAxisSmoothing(1, smoothing);
   robotLink.setAxisSmoothing(2, smoothing);
   robotLink.setAxisSmoothing(3, smoothing);
-  // Achse 4 unbenutzt – kein Smoothing nötig
+  robotLink.setAxisSmoothing(4, smoothing);
   robotLink.setAxisSmoothing(5, smoothing);
 
   robotLink.setCoordMode(COORD_CYLINDRICAL);
@@ -114,7 +122,7 @@ void loop() {
   robotLink.setElevation(analogRead(elevPot));
   robotLink.setRadius(analogRead(radiusPot));
   robotLink.setWrist(analogRead(wristPot));
-  robotLink.setAxisValue(4, 0);  // Achse 4 unbenutzt
+  robotLink.setElevationPitch(analogRead(pitchPot));  // Achse 4 → Werkzeug-Pitch η
   robotLink.setGripper(analogRead(gripperPot));
 
   robotLink.sendAllAxes();
@@ -156,7 +164,7 @@ Ellbogen (Servo 3) = α - π/2
 Handgelenk (Servo 4) = θ4_abs - δ
 ```
 
-Dabei hängt `θ4_abs` vom konfigurierten Handgelenk-Modus ab: `γ` bei `WRIST_PARALLEL_GAMMA`, `0` bei `WRIST_HORIZONTAL`.
+Dabei wird `θ4_abs` bei aktiver Pitch-Achse (`cylUsePitchAxis = true`) **direkt** aus dem Pitch-Poti (Achse 4) gesetzt: `θ4_abs = η`. Ist die Pitch-Achse deaktiviert, fällt es auf den konfigurierten Handgelenk-Modus zurück: `γ` bei `WRIST_PARALLEL_GAMMA`, `0` bei `WRIST_HORIZONTAL`.
 
 <Aside type="caution">
   Die Reichweite `l` wird auf den Bereich `rMin … rMax` (40–240 mm) abgebildet, der sicher unterhalb von `L1 + L2` = 250 mm liegt. Damit bleibt das Dreieck immer lösbar – der Cosinus-Term wird zusätzlich auf [-1, 1] begrenzt, sodass keine ungültigen Werte entstehen.

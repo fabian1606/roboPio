@@ -1,6 +1,5 @@
 #include "RobotLink.h"
 #include <Preferences.h>
-#include <sys/time.h>
 #include <esp_wifi.h>
 #include <math.h>
 
@@ -47,27 +46,11 @@ void RobotLink::flashAttention(CRGB color, uint16_t durationMs) {
 
 // ─── Mode + Preferences ───────────────────────────────────────────────────────
 
-void RobotLink::_loadMode(bool checkDoubleReset) {
+void RobotLink::_loadMode() {
     Preferences prefs;
     prefs.begin("robotlink", false);
-    uint8_t mode = prefs.getUChar("mode", 1);
-
-    if (checkDoubleReset) {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        uint64_t now_us  = (uint64_t)tv.tv_sec * 1000000ULL + tv.tv_usec;
-        uint64_t last_us = prefs.getULong64("last_reset", 0);
-
-        if (last_us > 0 && (now_us - last_us) < ROBOTLINK_DBLRESET_US) {
-            mode = (mode % 5) + 1;
-            Serial.printf("[RobotLink] Double-reset → Mode %d\n", mode);
-        }
-        prefs.putULong64("last_reset", now_us);
-    }
-
-    prefs.putUChar("mode", mode);
+    _mode = prefs.getUChar("mode", 1);
     prefs.end();
-    _mode = mode;
 }
 
 void RobotLink::_saveMode() {
@@ -110,7 +93,7 @@ bool RobotLink::beginSender(const uint8_t* peerMac) {
     _instance = this;
 
     _initLED();
-    _loadMode(true);  // double-reset always active; button pin adds a second option
+    _loadMode();
     _showRoleAnimation(true);
     setModeLED(_mode);
 
@@ -225,7 +208,7 @@ bool RobotLink::beginReceiver(RobotFrameCallback cb) {
     _callback = cb;
 
     _initLED();
-    _loadMode(false);
+    _loadMode();
     _loadParams();
     _showRoleAnimation(false);
     setModeLED(_mode);
@@ -279,15 +262,23 @@ float RobotLink::getParam(RobotParam param) const {
     return _params[param];
 }
 
+// Mode switching via a single click on the BOOT button (GPIO0, active-LOW).
+// Each debounced press cycles the mode (1→2→3→4→5→1). This replaces the
+// unreliable double-reset timing (which depended on the RTC clock surviving a
+// reset) and works on any board that wires ROBOTLINK_BTN_PIN to the BOOT button.
 void RobotLink::_checkModeButton() {
 #if ROBOTLINK_BTN_PIN >= 0
-    bool pressed = (digitalRead(ROBOTLINK_BTN_PIN) == LOW);
-    if (pressed && !_btnPrev && (millis() - _lastToggleAt) > 50) {
+    bool          pressed = (digitalRead(ROBOTLINK_BTN_PIN) == LOW);
+    unsigned long now     = millis();
+
+    // Debounced falling edge → switch mode.
+    if (pressed && !_btnPrev && (now - _lastEdgeAt) > ROBOTLINK_DEBOUNCE_MS) {
+        _lastEdgeAt = now;
         uint8_t newMode = (_mode % 5) + 1;
         setMode(newMode);
-        _lastToggleAt = millis();
-        Serial.printf("[RobotLink] Mode → %d\n", newMode);
+        Serial.printf("[RobotLink] BOOT click → Mode %d\n", newMode);
     }
+
     _btnPrev = pressed;
 #endif
 }
@@ -311,7 +302,7 @@ void RobotLink::setKinematics(const KinematicsConfig& cfg) {
 //   raw[1]: elevation γ                    (0–4095 → elevMin…elevMax rad)
 //   raw[2]: shoulder→wrist distance l      (0–4095 → rMin…rMax mm)
 //   raw[3]: wrist rotate                   (pass-through zu servo 5)
-//   raw[4]: unused
+//   raw[4]: tool pitch η                   (pitchMin…pitchMax rad, falls cylUsePitchAxis)
 //   raw[5]: gripper                        (pass-through zu servo 6)
 //
 // Math (triangle S-E-W with sides a=L1, b=L2, l):
@@ -320,7 +311,7 @@ void RobotLink::setKinematics(const KinematicsConfig& cfg) {
 //                                          eindeutig für alle l in [|a-b|, a+b])
 //   β    = phi + γ                          absoluter Schulterwinkel zur Horizontalen
 //   δ    = β + α - π                        absoluter Unterarmwinkel zur Horizontalen
-//   θ4_abs = γ  (WRIST_PARALLEL_GAMMA)  |  0  (WRIST_HORIZONTAL)
+//   θ4_abs = η  (cylUsePitchAxis, Achse 4)  |  γ (WRIST_PARALLEL_GAMMA)  |  0 (WRIST_HORIZONTAL)
 //   θ4_rel = θ4_abs - δ
 //
 // Servo zero offsets = mechanische Center-Pose (L1 vertikal, L2 horizontal, L3 colinear):
@@ -350,7 +341,14 @@ void RobotLink::_applyCylindricalIK(const uint16_t raw[6], uint16_t out[6]) cons
     float delta = beta + alpha - (float)M_PI;
 
     // ── Wrist tilt — absolute L3 direction, then relative to L2 ─────────────
-    float theta4_abs = (_kin.wristMode == WRIST_HORIZONTAL) ? 0.0f : gamma;
+    // Pitch-Achse (4) hat Vorrang: η wird vom Bediener frei vorgegeben. Ohne
+    // Pitch-Achse fällt es auf die statische WristMode-Logik zurück (Legacy).
+    float theta4_abs;
+    if (_kin.cylUsePitchAxis) {
+        theta4_abs = _kin.pitchMin + (raw[4] / 4095.0f) * (_kin.pitchMax - _kin.pitchMin);
+    } else {
+        theta4_abs = (_kin.wristMode == WRIST_HORIZONTAL) ? 0.0f : gamma;
+    }
     float theta4_rel = theta4_abs - delta;
 
     // ── Servo joint angles with mechanical center offsets ───────────────────

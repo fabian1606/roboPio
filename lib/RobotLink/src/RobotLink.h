@@ -15,7 +15,7 @@
 #endif
 #define ROBOTLINK_NUM_LEDS      1
 #define ROBOTLINK_NUM_AXES      6
-#define ROBOTLINK_DBLRESET_US  400000ULL  // 400 ms window for double-reset
+#define ROBOTLINK_DEBOUNCE_MS   40        // button debounce (ignore bouncing edges)
 #define ROBOTLINK_WIFI_CHANNEL  1         // fixed channel — avoids scan overhead
 
 // ─── CoordMode ────────────────────────────────────────────────────────────────
@@ -73,12 +73,15 @@ struct KinematicsConfig {
     float rMax;                // maximum shoulder→wrist distance in mm
     float elevMin;             // minimum elevation in radians
     float elevMax;             // maximum elevation in radians
-    WristMode wristMode;       // axis-4 strategy
+    WristMode wristMode;       // wrist-tilt fallback when cylUsePitchAxis = false
+    bool  cylUsePitchAxis;     // true: axis 4 sets absolute tool pitch η (pitchMin…pitchMax);
+                               // false: wrist tilt derived from wristMode (legacy behaviour)
     // Cartesian
     float xMin, xMax;          // X range in mm  (vorne/hinten)
     float yMin, yMax;          // Y range in mm  (links/rechts)
     float zMin, zMax;          // Z range in mm  (hoch/runter)
-    float pitchMin, pitchMax;  // Tool-Pitch η range in rad (0 = horizontal)
+    float pitchMin, pitchMax;  // Tool-Pitch η range in rad (0 = horizontal).
+                               // Used by cartesian axis 3 and cylindrical axis 4 (if cylUsePitchAxis).
     CartesianLimitMode cartLimitMode;  // Verhalten bei unerreichbarem Ziel (Default: CLAMP)
 };
 
@@ -179,11 +182,12 @@ public:
     void setPitch(uint16_t v)       { setAxisValue(3, v); }  // Werkzeug-Neigung η
     void setWristRotate(uint16_t v) { setAxisValue(4, v); }  // Handgelenk-Rotation
 
-    // COORD_CYLINDRICAL — (base-rot, elevation, radius, wrist, –, gripper)
+    // COORD_CYLINDRICAL — (base-rot, elevation, radius, wrist, pitch, gripper)
     void setBaseRotation(uint16_t v){ setAxisValue(0, v); }  // Basisdrehung
     void setElevation(uint16_t v)   { setAxisValue(1, v); }  // Elevationswinkel
     void setRadius(uint16_t v)      { setAxisValue(2, v); }  // Ein-/Ausfahren
-    void setWrist(uint16_t v)       { setAxisValue(3, v); }  // Handgelenk
+    void setWrist(uint16_t v)       { setAxisValue(3, v); }  // Handgelenk-Rotation
+    void setElevationPitch(uint16_t v){ setAxisValue(4, v); }// Werkzeug-Neigung η (cylUsePitchAxis)
 
     // Shared (axis 5 in both modes)
     void setGripper(uint16_t v)     { setAxisValue(5, v); }  // Greifer
@@ -242,7 +246,7 @@ private:
 
     // ── Mode + Preferences ───────────────────────────────────────────────────
     uint8_t _mode = 1;
-    void    _loadMode(bool checkDoubleReset);
+    void    _loadMode();
     void    _saveMode();
 
     // ── Frame helpers ────────────────────────────────────────────────────────
@@ -281,9 +285,9 @@ private:
     // Applies cartesian IK (X, Y, Z, pitch) to raw values.
     void _applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const;
 
-    // ── Mode button ──────────────────────────────────────────────────────────
-    bool          _btnPrev      = false;
-    unsigned long _lastToggleAt = 0;
+    // ── Mode button (BOOT button single click) ─────────────────────────────────
+    bool          _btnPrev    = false;
+    unsigned long _lastEdgeAt = 0;  // last debounced press edge (for debounce)
     void _checkModeButton();
 
     // ── ISR bridge ───────────────────────────────────────────────────────────

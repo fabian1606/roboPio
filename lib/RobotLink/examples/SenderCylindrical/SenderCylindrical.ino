@@ -8,8 +8,8 @@
 //   basePot    (GPIO  4) → Achse 0 → Basisrotation  (Servo 1, direkt)
 //   elevPot    (GPIO  7) → Achse 1 → Elevation      (Winkel nach oben, 0°–80°)
 //   radiusPot  (GPIO  6) → Achse 2 → Radius         (lineares Ein-/Ausfahren)
-//   wristPot   (GPIO  5) → Achse 3 → Handgelenk     (Servo 5, direkt)
-//                        → Achse 4 → unbenutzt
+//   wristPot   (GPIO  5) → Achse 3 → Handgelenk-Rot (Servo 5, direkt)
+//   pitchPot   (GPIO 15) → Achse 4 → Werkzeug-Pitch η (IK, -90°…+90°)
 //   gripperPot (GPIO 16) → Achse 5 → Greifer        (Servo 6, direkt)
 //
 // Die Kinematik (IK) läuft auf dem Receiver — dieser Sender schickt nur
@@ -20,8 +20,8 @@
 const int basePot    = 4;   // Achse 0 → Basisrotation
 const int elevPot    = 7;   // Achse 1 → Elevation
 const int radiusPot  = 6;   // Achse 2 → Radius
-const int wristPot   = 5;   // Achse 3 → Handgelenk
-                            // Achse 4 → unbenutzt
+const int wristPot   = 5;   // Achse 3 → Handgelenk-Rotation
+const int pitchPot   = 15;  // Achse 4 → Werkzeug-Pitch η
 const int gripperPot = 16;  // Achse 5 → Greifer
 
 // Smoothing-Stärke (0 = aus, 1 = kaum, 50 = stark)
@@ -38,7 +38,7 @@ void setup() {
     robotLink.setAxisSmoothing(1, smoothing);
     robotLink.setAxisSmoothing(2, smoothing);
     robotLink.setAxisSmoothing(3, smoothing);
-    // Achse 4 unbenutzt — kein Smoothing nötig
+    robotLink.setAxisSmoothing(4, smoothing);
     robotLink.setAxisSmoothing(5, smoothing);
 
     robotLink.setCoordMode(COORD_CYLINDRICAL);
@@ -61,11 +61,11 @@ void loop() {
     robotLink.setElevation(analogRead(elevPot));
     robotLink.setRadius(analogRead(radiusPot));
     robotLink.setWrist(analogRead(wristPot));
-    robotLink.setAxisValue(4, 0);  // Achse 4 unbenutzt
+    robotLink.setElevationPitch(analogRead(pitchPot));  // Achse 4 → Werkzeug-Pitch η
     robotLink.setGripper(analogRead(gripperPot));
 
-    Serial.printf("[Elev] %4d  [Rad] %4d\n",
-                  analogRead(elevPot), analogRead(radiusPot));
+    Serial.printf("[Elev] %4d  [Rad] %4d  [Pitch] %4d\n",
+                  analogRead(elevPot), analogRead(radiusPot), analogRead(pitchPot));
 
     robotLink.sendAllAxes();
     delay(20);  // 50 Hz

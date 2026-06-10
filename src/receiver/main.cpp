@@ -61,7 +61,8 @@ static const KinematicsConfig KINEMATICS = {
     .rMax    = 240.0f,    // mm — Schulter→Handgelenk-Distanz, sicher unter L1+L2=253
     .elevMin =   0.0f,    // rad — 0° = horizontal
     .elevMax =   1.396f,  // rad — 80°
-    .wristMode = WRIST_PARALLEL_GAMMA,  // L3 folgt γ; alt: WRIST_HORIZONTAL
+    .wristMode = WRIST_PARALLEL_GAMMA,  // Fallback, wenn cylUsePitchAxis = false
+    .cylUsePitchAxis = true,            // Achse 4 steuert Werkzeug-Pitch η (pitchMin…pitchMax)
     .xMin =   50.0f, .xMax = 350.0f,    // mm — vorne/hinten
     .yMin = -200.0f, .yMax = 200.0f,    // mm — links/rechts
     .zMin = -100.0f, .zMax = 300.0f,    // mm — hoch/runter
