@@ -13,13 +13,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
 
-      - name: Version aus library.properties lesen
+      - name: Version aus Tag extrahieren und library.properties aktualisieren
         id: version
         run: |
-          VERSION=$(grep '^version=' lib/RobotLink/library.properties | cut -d= -f2)
+          # lib/v1.0.2 → 1.0.2
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#lib/v}"
+          sed -i "s/^version=.*/version=$VERSION/" lib/RobotLink/library.properties
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "ZIP=RobotLink-$VERSION.zip" >> "$GITHUB_OUTPUT"
+
+      - name: library.properties zurück ins Repo committen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add lib/RobotLink/library.properties
+          git diff --cached --quiet || git commit -m "chore: bump library version to ${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:main
 
       - name: ZIP bauen
         run: |
