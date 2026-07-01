@@ -236,8 +236,11 @@ static const char* _paramKey(uint8_t paramID) {
 
 void RobotLink::_loadParams() {
     Preferences prefs;
-    prefs.begin("robotlink", true);  // read-only
+    prefs.begin("robotlink", false);
+    // PARAM_YAW_OFFSET is session-only: clear any value persisted by older firmware.
+    if (prefs.isKey("p_yaw")) prefs.remove("p_yaw");
     for (uint8_t i = 0; i < PARAM_COUNT; i++) {
+        if (i == PARAM_YAW_OFFSET) continue;  // session-only, always starts at 0
         const char* key = _paramKey(i);
         if (key) _params[i] = prefs.getFloat(key, 0.0f);
     }
@@ -247,6 +250,10 @@ void RobotLink::_loadParams() {
 void RobotLink::_applyParam(uint8_t paramID, float value) {
     if (paramID >= PARAM_COUNT) return;
     _params[paramID] = value;
+    if (paramID == PARAM_YAW_OFFSET) {  // session-only — not written to NVS
+        Serial.printf("[RobotLink] Param %u = %.4f (in-memory only)\n", paramID, value);
+        return;
+    }
     const char* key = _paramKey(paramID);
     if (key) {
         Preferences prefs;

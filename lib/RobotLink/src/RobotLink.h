@@ -31,7 +31,7 @@ enum CoordMode : uint8_t {
 // RobotParamFrame). Add future runtime-settable parameters here — the protocol,
 // persistence, and dispatch are written to scale to new IDs without changes.
 enum RobotParam : uint8_t {
-    PARAM_YAW_OFFSET = 0,  // float, rad — rotation of the cartesian frame about Z
+    PARAM_YAW_OFFSET = 0,  // float, rad — rotation of the cartesian frame about Z (session-only, resets to 0 on reboot)
     PARAM_MAX_SPEED  = 1,  // servo speed units (steps/s); 0 = max/unbegrenzt
     PARAM_COUNT            // keep last — number of parameters
 };
