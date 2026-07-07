@@ -228,9 +228,10 @@ bool RobotLink::beginReceiver(RobotFrameCallback cb) {
 // Preferences key per parameter. Short keys (NVS limit 15 chars).
 static const char* _paramKey(uint8_t paramID) {
     switch (paramID) {
-        case PARAM_YAW_OFFSET: return "p_yaw";
-        case PARAM_MAX_SPEED:  return "p_speed";
-        default:               return nullptr;
+        case PARAM_YAW_OFFSET:        return "p_yaw";
+        case PARAM_MAX_SPEED:         return "p_speed";
+        case PARAM_CART_DIRECT_PITCH: return "p_cpitch";
+        default:                      return nullptr;
     }
 }
 
@@ -420,9 +421,19 @@ void RobotLink::_applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const 
     float psi = atan2f(Y, X) + _params[PARAM_YAW_OFFSET];
     float r   = sqrtf(X*X + Y*Y);
 
+    // Direct-pitch mode: pitch drives the wrist joint alone. (X,Y,Z) then targets
+    // the wrist joint itself (no L3 back-step), so pitch and position decouple.
+    bool directPitch = _params[PARAM_CART_DIRECT_PITCH] > 0.5f;
+
     // ── Wrist position (back-step L3 along tool-pitch direction) ────────────
-    float Wr = r - L3 * cosf(eta);
-    float Wz = Z - L3 * sinf(eta);
+    float Wr, Wz;
+    if (directPitch) {
+        Wr = r;                    // wrist joint = target directly (L3 handled by servo 4)
+        Wz = Z;
+    } else {
+        Wr = r - L3 * cosf(eta);   // legacy: (X,Y,Z) is the tool tip
+        Wz = Z - L3 * sinf(eta);
+    }
 
     // ── 2-link reach check ───────────────────────────────────────────────────
     float l     = sqrtf(Wr*Wr + Wz*Wz);
@@ -453,7 +464,9 @@ void RobotLink::_applyCartesianIK(const uint16_t raw[6], uint16_t out[6]) const 
 
     float beta  = phi + gamma;
     float delta = beta + alpha - (float)M_PI;
-    float theta4_rel = eta - delta;
+    // Direct pitch: servo 4 = η itself (joint-relative), no coupling to the arm.
+    // Legacy: η is an absolute tool orientation, so subtract the forearm angle δ.
+    float theta4_rel = directPitch ? eta : (eta - delta);
 
     // ── Servo joint angles with mechanical center offsets ───────────────────
     float thetaBase     = psi;

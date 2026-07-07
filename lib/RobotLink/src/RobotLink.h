@@ -33,6 +33,9 @@ enum CoordMode : uint8_t {
 enum RobotParam : uint8_t {
     PARAM_YAW_OFFSET = 0,  // float, rad — rotation of the cartesian frame about Z (session-only, resets to 0 on reboot)
     PARAM_MAX_SPEED  = 1,  // servo speed units (steps/s); 0 = max/unbegrenzt
+    PARAM_CART_DIRECT_PITCH = 2,  // float 0/1 — Cartesian: 1 = pitch drives servo 4
+                                  //   directly (wrist joint, decoupled); 0 = legacy
+                                  //   tip-referenced pitch (couples shoulder/elbow). Persisted.
     PARAM_COUNT            // keep last — number of parameters
 };
 
@@ -205,6 +208,12 @@ public:
     // Units are SMS-STS speed steps/s; 0 = unbegrenzt (maximale Geschwindigkeit).
     // Persisted on the receiver. Convenience wrapper around sendParam().
     void setMaxSpeed(uint16_t speed) { sendParam(PARAM_MAX_SPEED, (float)speed); }
+
+    // COORD_CARTESIAN: when true, tool pitch (axis 3) drives the wrist joint
+    // (servo 4) directly — pitch no longer moves the shoulder/elbow and X/Y/Z
+    // target the wrist joint instead of the tool tip. When false (default), the
+    // legacy tip-referenced pitch is used. Persisted on the receiver.
+    void setCartDirectPitch(bool on) { sendParam(PARAM_CART_DIRECT_PITCH, on ? 1.0f : 0.0f); }
 
     // ── Receiver ─────────────────────────────────────────────────────────────
 

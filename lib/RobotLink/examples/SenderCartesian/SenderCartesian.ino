@@ -67,6 +67,12 @@ void setup() {
     // Bewegungen). Wird am Empfänger dauerhaft gespeichert.
     robotLink.setMaxSpeed(0);
 
+    // Pitch steuert nur das Handgelenk (Servo 4) direkt — die Neigung bewegt
+    // keine anderen Achsen mehr, und X/Y/Z zielen auf das Handgelenk statt die
+    // Werkzeugspitze. Wird am Empfänger dauerhaft gespeichert.
+    // false = altes Verhalten (Pitch dreht um einen Punkt, koppelt Schulter/Ellbogen).
+    robotLink.setCartDirectPitch(true);
+
     Serial.printf("[Sender] Kartesisch — Modus %d\n", robotLink.getMode());
 }
 
