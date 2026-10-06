@@ -16,6 +16,7 @@
             "projectEnvName": "receiver",
             "toolchainBinDir": "/Users/fabian.rafreider/.platformio/packages/toolchain-xtensa-esp-elf/bin",
             "internalConsoleOptions": "openOnSessionStart",
+            "svdPath": "/Users/fabian.rafreider/.platformio/platforms/espressif32/misc/svd/esp32.svd",
             "preLaunchTask": {
                 "type": "PlatformIO",
                 "task": "Pre-Debug"
@@ -28,7 +29,8 @@
             "executable": "/Users/fabian.rafreider/Documents/roboPio/.pio/build/receiver/firmware.elf",
             "projectEnvName": "receiver",
             "toolchainBinDir": "/Users/fabian.rafreider/.platformio/packages/toolchain-xtensa-esp-elf/bin",
-            "internalConsoleOptions": "openOnSessionStart"
+            "internalConsoleOptions": "openOnSessionStart",
+            "svdPath": "/Users/fabian.rafreider/.platformio/platforms/espressif32/misc/svd/esp32.svd"
         },
         {
             "type": "platformio-debug",
@@ -38,6 +40,7 @@
             "projectEnvName": "receiver",
             "toolchainBinDir": "/Users/fabian.rafreider/.platformio/packages/toolchain-xtensa-esp-elf/bin",
             "internalConsoleOptions": "openOnSessionStart",
+            "svdPath": "/Users/fabian.rafreider/.platformio/platforms/espressif32/misc/svd/esp32.svd",
             "loadMode": "manual"
         }
     ]

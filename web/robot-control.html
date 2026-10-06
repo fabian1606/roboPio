@@ -1,0 +1,209 @@
+<!doctype html>
+<!--
+  Roboter-Steuerung über USB-Serial (Web Serial API) — Beispiel-Interface.
+
+  Läuft nur in Chrome oder Edge (Web Serial). Datei einfach per Doppelklick
+  öffnen, auf "Verbinden" klicken und den Port des Roboters wählen.
+
+  ── Serial-Protokoll des Roboters (115200 Baud, eine Zeile pro Befehl, '\n') ──
+    M <achse> <delta>      relativ bewegen        z.B. "M 1 +40", "M 6 -100"
+    P <achse> <wert>       eine Achse absolut     z.B. "P 3 2048"
+    A <w1> <w2> ... <w6>   alle Achsen absolut    z.B. "A 2048 2048 2048 2048 2048 2048"
+    H                      Home (alle Achsen auf 2048 = Mitte)
+    ?                      nur aktuelle Werte abfragen
+  Achsen: 1..6, Werte: 0..4095 (werden auf die Servo-Grenzen gemappt).
+  Antwort auf jeden gültigen Befehl:  "POS <w1> <w2> <w3> <w4> <w5> <w6>"
+  Bei Fehlern:                        "ERR <grund>"
+
+  ── Bedienung ──
+    Tasten Q/A, W/S, E/D, R/F, T/G, Z/H  → Achse 1..6  plus/minus (gedrückt halten)
+    Buttons +/-  → gleiches mit der Maus, Schieberegler → Achse absolut setzen
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roboter-Steuerung</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+  .axis { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+  .axis .name { width: 90px; }
+  .axis input[type=range] { flex: 1; }
+  .axis .value { width: 44px; text-align: right; font-family: monospace; }
+  button { min-width: 44px; padding: 6px 10px; font-size: 16px; }
+  kbd { border: 1px solid #999; border-radius: 3px; padding: 0 4px; font-size: 12px; }
+  #log { height: 160px; overflow-y: auto; background: #111; color: #0f0; font: 12px monospace; padding: 6px; white-space: pre; }
+</style>
+</head>
+<body>
+<h1>Roboter-Steuerung</h1>
+
+<p>
+  <button id="connect">Verbinden</button>
+  <button id="home">Home</button>
+  <span id="status">nicht verbunden</span>
+</p>
+<p>
+  Schrittweite: <input type="range" id="step" min="5" max="100" value="30">
+  <span id="stepValue">30</span>
+</p>
+
+<div id="axes"></div>
+
+<p>
+  <input id="raw" placeholder="eigener Befehl, z.B. M 1 +100" size="30">
+  <button id="send">Senden</button>
+</p>
+<div id="log"></div>
+
+<script>
+// Achse 1..6 ↔ Tasten [plus, minus]
+const AXES = [
+  { name: "Achse 1",  keys: ["q", "a"] },
+  { name: "Achse 2",  keys: ["w", "s"] },
+  { name: "Achse 3",  keys: ["e", "d"] },
+  { name: "Achse 4",  keys: ["r", "f"] },
+  { name: "Achse 5",  keys: ["t", "g"] },
+  { name: "Greifer",  keys: ["z", "h"] },
+];
+const SEND_INTERVAL_MS = 50;  // wie oft gehaltene Tasten einen Schritt senden
+
+let port = null;
+let writer = null;
+const held = new Set();       // gerade gehaltene Richtungen, z.B. "1+" oder "6-"
+const sliders = [];
+const values = [];
+
+// ── Oberfläche aufbauen ─────────────────────────────────────────────────────
+AXES.forEach((axis, i) => {
+  const n = i + 1;
+  const row = document.createElement("div");
+  row.className = "axis";
+  row.innerHTML = `
+    <span class="name">${axis.name}</span>
+    <button data-dir="${n}-">− <kbd>${axis.keys[1].toUpperCase()}</kbd></button>
+    <input type="range" min="0" max="4095" value="2048">
+    <button data-dir="${n}+">+ <kbd>${axis.keys[0].toUpperCase()}</kbd></button>
+    <span class="value">2048</span>`;
+  document.getElementById("axes").appendChild(row);
+
+  const slider = row.querySelector("input");
+  const value = row.querySelector(".value");
+  sliders.push(slider);
+  values.push(value);
+  slider.addEventListener("input", () => {
+    value.textContent = slider.value;
+    send(`P ${n} ${slider.value}`);
+  });
+
+  // +/- Buttons: gedrückt halten = weiterfahren
+  row.querySelectorAll("button").forEach(btn => {
+    const dir = btn.dataset.dir;
+    btn.addEventListener("pointerdown", () => held.add(dir));
+    btn.addEventListener("pointerup", () => held.delete(dir));
+    btn.addEventListener("pointerleave", () => held.delete(dir));
+  });
+});
+
+// ── Tastatur ────────────────────────────────────────────────────────────────
+function keyToDir(key) {
+  key = key.toLowerCase();
+  if (key === "y") key = "z";  // englisches Layout: Y liegt dort, wo auf Deutsch Z ist
+  for (let i = 0; i < AXES.length; i++) {
+    if (key === AXES[i].keys[0]) return `${i + 1}+`;
+    if (key === AXES[i].keys[1]) return `${i + 1}-`;
+  }
+  return null;
+}
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type === "text") return;
+  const dir = keyToDir(e.key);
+  if (dir) { held.add(dir); e.preventDefault(); }
+});
+document.addEventListener("keyup", e => {
+  const dir = keyToDir(e.key);
+  if (dir) held.delete(dir);
+});
+window.addEventListener("blur", () => held.clear());
+
+// Alle gehaltenen Richtungen regelmäßig als Schritt senden
+setInterval(() => {
+  const step = document.getElementById("step").value;
+  for (const dir of held) {
+    const axis = dir.slice(0, -1);
+    const sign = dir.slice(-1);
+    send(`M ${axis} ${sign}${step}`);
+  }
+}, SEND_INTERVAL_MS);
+
+document.getElementById("step").addEventListener("input", e => {
+  document.getElementById("stepValue").textContent = e.target.value;
+});
+
+// ── Serial ──────────────────────────────────────────────────────────────────
+async function connect() {
+  if (!("serial" in navigator)) {
+    alert("Web Serial wird nicht unterstützt. Bitte Chrome oder Edge verwenden.");
+    return;
+  }
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  writer = port.writable.getWriter();
+  document.getElementById("status").textContent = "verbunden";
+  send("?");
+  readLoop();
+}
+
+async function send(command) {
+  if (!writer) return;
+  log("> " + command);
+  await writer.write(new TextEncoder().encode(command + "\n"));
+}
+
+// Antworten zeilenweise lesen; "POS ..." aktualisiert die Schieberegler
+async function readLoop() {
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) handleLine(line.trim());
+  }
+}
+
+function handleLine(line) {
+  if (!line) return;
+  log(line);
+  if (line.startsWith("POS ")) {
+    line.slice(4).split(" ").forEach((v, i) => {
+      if (i >= sliders.length) return;
+      sliders[i].value = v;
+      values[i].textContent = v;
+    });
+  }
+}
+
+function log(text) {
+  const el = document.getElementById("log");
+  el.textContent += text + "\n";
+  const lines = el.textContent.split("\n");
+  if (lines.length > 200) el.textContent = lines.slice(-200).join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+
+document.getElementById("connect").addEventListener("click", connect);
+document.getElementById("home").addEventListener("click", () => send("H"));
+document.getElementById("send").addEventListener("click", () => {
+  const raw = document.getElementById("raw");
+  send(raw.value);
+  raw.value = "";
+});
+document.getElementById("raw").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("send").click();
+});
+</script>
+</body>
+</html>
