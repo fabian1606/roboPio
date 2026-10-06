@@ -27,7 +27,7 @@
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
   .axis { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
-  .axis .name { width: 90px; }
+  .axis .name { width: 110px; }
   .axis input[type=range] { flex: 1; }
   .axis .value { width: 44px; text-align: right; font-family: monospace; }
   button { min-width: 44px; padding: 6px 10px; font-size: 16px; }
@@ -59,12 +59,12 @@
 <script>
 // Achse 1..6 ↔ Tasten [plus, minus]
 const AXES = [
-  { name: "Achse 1",  keys: ["q", "a"] },
-  { name: "Achse 2",  keys: ["w", "s"] },
-  { name: "Achse 3",  keys: ["e", "d"] },
-  { name: "Achse 4",  keys: ["r", "f"] },
-  { name: "Achse 5",  keys: ["t", "g"] },
-  { name: "Greifer",  keys: ["z", "h"] },
+  { name: "Basis",          keys: ["q", "a"] },
+  { name: "Schulter",       keys: ["w", "s"] },
+  { name: "Ellbogen",       keys: ["e", "d"] },
+  { name: "Hand-Neigung",   keys: ["r", "f"] },
+  { name: "Hand-Rotation",  keys: ["t", "g"] },
+  { name: "Greifer",        keys: ["z", "h"] },
 ];
 const SEND_INTERVAL_MS = 50;  // wie oft gehaltene Tasten einen Schritt senden
 

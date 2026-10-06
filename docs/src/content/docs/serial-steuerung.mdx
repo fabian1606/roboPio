@@ -1,0 +1,69 @@
+---
+title: Serial-Steuerung
+draft: false
+description: Den Roboter per USB-Serial mit Textbefehlen steuern – inklusive Beispiel-Website zum Ausprobieren und als Vorlage für eigene Interfaces.
+---
+
+import { Aside, LinkButton } from '@astrojs/starlight/components';
+
+Der Empfänger (Roboter) nimmt neben ESP-NOW auch **Textbefehle über USB-Serial** an. So kann man den Roboter direkt vom Laptop aus steuern – z. B. mit einer Website, einem Python-Skript oder dem Serial-Monitor.
+
+## Beispiel-Website
+
+<LinkButton href="/robot-control.html" target="_blank">Steuerung öffnen</LinkButton>
+<LinkButton href="/robot-control.html" download="robot-control.html" variant="secondary">HTML-Datei herunterladen</LinkButton>
+
+1. Roboter per USB mit dem Laptop verbinden.
+2. Website in **Chrome oder Edge** öffnen (andere Browser unterstützen Web Serial nicht).
+3. **Verbinden** klicken und den Port des Roboters wählen (z. B. `usbserial-…`).
+4. Steuern mit Tastatur, Buttons oder Schiebereglern.
+
+| Achse | Funktion | Plus | Minus |
+|-------|----------|------|-------|
+| 1 | Basis-Rotation | <kbd>Q</kbd> | <kbd>A</kbd> |
+| 2 | Schulter | <kbd>W</kbd> | <kbd>S</kbd> |
+| 3 | Ellbogen | <kbd>E</kbd> | <kbd>D</kbd> |
+| 4 | Handgelenk-Neigung | <kbd>R</kbd> | <kbd>F</kbd> |
+| 5 | Handgelenk-Rotation | <kbd>T</kbd> | <kbd>G</kbd> |
+| 6 | Greifer | <kbd>Z</kbd> | <kbd>H</kbd> |
+
+<Aside type="caution">
+  Der Serial-Port kann nur von einem Programm gleichzeitig geöffnet sein. Vorher den Serial-Monitor in der Arduino IDE bzw. PlatformIO schließen.
+</Aside>
+
+<Aside type="tip" title="Eigenes Interface bauen">
+  Die HTML-Datei ist bewusst einfach gehalten und enthält oben das komplette Protokoll als Kommentar. Ihr könnt sie herunterladen und einer KI als Beispiel geben: *„So funktioniert die Steuerung – baue mir ein Interface, das …“*
+</Aside>
+
+---
+
+## Protokoll
+
+Verbindung: **115200 Baud**, ein Befehl pro Zeile, Zeilenende `\n`.
+Achsen sind **1–6**, Werte **0–4095** (gleiche Skala wie ein Poti; wird auf die Servo-Grenzen umgerechnet).
+
+| Befehl | Wirkung | Beispiel |
+|--------|---------|----------|
+| `M <achse> <delta>` | Achse relativ bewegen | `M 1 +40`, `M 6 -100` |
+| `P <achse> <wert>` | eine Achse absolut setzen | `P 3 2048` |
+| `A <w1> … <w6>` | alle Achsen absolut setzen | `A 2048 2048 2048 2048 2048 2048` |
+| `H` | Home – alle Achsen auf 2048 (Mitte) | `H` |
+| `?` | nur aktuelle Werte abfragen | `?` |
+
+### Antworten
+
+Auf jeden gültigen Befehl antwortet der Roboter mit den aktuellen Soll-Werten aller Achsen:
+
+```
+POS 2048 1900 2300 2048 2048 3000
+```
+
+Bei einem ungültigen Befehl kommt eine Fehlermeldung, z. B.:
+
+```
+ERR achse 1-6
+```
+
+<Aside type="note">
+  Sendet gleichzeitig ein Controller per ESP-NOW, gewinnt jeweils der zuletzt empfangene Befehl. Beide Quellen arbeiten mit denselben Achswerten weiter.
+</Aside>

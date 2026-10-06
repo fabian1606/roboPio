@@ -29,6 +29,10 @@ export default defineConfig({
             { label: 'Kartesisch-Modus', link: '/modes/kartesisch/' },
           ],
         },
+        {
+          label: 'Serial-Steuerung',
+          link: '/serial-steuerung/',
+        },
       ],
     }),
   ],
