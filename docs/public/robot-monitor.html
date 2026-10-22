@@ -1,0 +1,291 @@
+<!doctype html>
+<!--
+  Motor-Monitor & Schutz-Test über USB-Serial (Web Serial API).
+
+  Zeigt pro Servo live Strom, Temperatur, Torque-Zustand, Fehlerstatus des Servos
+  und das I²t-Wärmekonto — und hat Testknöpfe, um den Überhitzungsschutz am
+  echten Roboter zu prüfen, ohne einen Motor wirklich zu überhitzen.
+
+  Läuft nur in Chrome oder Edge (Web Serial). Datei per Doppelklick öffnen,
+  "Verbinden" klicken, Port des Roboters wählen. Die Seite schickt "T" und
+  schaltet damit die Telemetrie des Receivers ein.
+
+  ── Telemetrie-Zeile des Roboters (alle 100 ms) ──
+    TEL <ms> <I1> <T1> <heat1> <state1> <err1> <trq1> ... <I6> ... <trq6>
+  I = |Strom| in Roh-LSB (~6,5 mA), T = °C, heat = I²t-Wärmekonto in ‰
+  (1000 = Drosselung), state: 0 ok, 1 Stall-Warnung, 2 I²t-gedrosselt, 3 Motor aus,
+  err = Fehlerstatus des Servos selbst (Reg 65: Bit 2 Temp, Bit 3 Strom, Bit 5 Überlast),
+  trq = Torque-Enable, wie der Servo es meldet (1 = bestromt).
+
+  ── Testbefehle ──
+    X <achse>   Übertemperatur simulieren an/aus → echter Abschaltpfad
+    R <achse>   Torque aus, Ist-Position schreiben: schaltet das den Motor ein?
+                Antwort "RTEST <achse> <vorher> <nachher>"
+    M <achse> <delta>, H   bewegen / Home
+
+  STALL_CURRENT / TEMP_CRIT_C unten müssen zu src/receiver/main.cpp passen.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motor-Monitor</title>
+<style>
+  :root { --bg: #fff; --fg: #222; --muted: #777; --grid: #e4e4e4; --card: #fafafa;
+          --line: #2a6fdb; --limit: #d33; --heat: #e8a33a; --ok: #2a9d55; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161616; --fg: #ddd; --muted: #8a8a8a; --grid: #2e2e2e; --card: #1d1d1d;
+            --line: #5b9bff; --limit: #ff6b6b; --heat: #f0b450; --ok: #4cc27a; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; max-width: 1080px; margin: 24px auto; padding: 0 16px; background: var(--bg); color: var(--fg); }
+  h1 { margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-top: 0; }
+  button { min-width: 44px; padding: 6px 10px; font-size: 15px; cursor: pointer; }
+  button:disabled { cursor: default; }
+  .bar-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  #status { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .servo { border: 1px solid var(--grid); border-radius: 8px; padding: 10px 12px; background: var(--card); }
+  .servo.off { border-color: var(--limit); box-shadow: 0 0 0 1px var(--limit) inset; }
+  .servo header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .servo h2 { font-size: 15px; margin: 0; }
+  .badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .badge { font-size: 12px; padding: 1px 7px; border-radius: 10px; background: var(--grid); white-space: nowrap; }
+  .badge.on { background: var(--ok); color: #fff; }
+  .badge.warn { background: #f3d77a; color: #222; }
+  .badge.hot { background: #f0a050; color: #222; }
+  .badge.bad { background: var(--limit); color: #fff; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .stat .k { font-size: 11px; color: var(--muted); }
+  .stat .v { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat .v small { font-size: 12px; color: var(--muted); }
+  .meter { height: 6px; background: var(--grid); border-radius: 3px; margin-top: 3px; overflow: hidden; }
+  .meter div { height: 100%; width: 0; transition: width .2s; }
+  canvas { width: 100%; height: 90px; display: block; margin-top: 8px; }
+  .controls { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .controls button { font-size: 13px; padding: 4px 8px; }
+  .controls .sim.active { background: var(--limit); color: #fff; border-color: var(--limit); }
+  .rtest { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 1.2em; }
+  .legend { font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin: 0 4px 0 12px; }
+  details { margin-top: 18px; }
+  #log { height: 180px; overflow-y: auto; background: #111; color: #0f0; font: 12px monospace; padding: 6px; white-space: pre; }
+  .hint { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Motor-Monitor</h1>
+<p class="sub">Strom, Temperatur und Überhitzungsschutz aller Servos live — mit Testknöpfen.</p>
+
+<div class="bar-top">
+  <button id="connect">Verbinden</button>
+  <button id="toggle" disabled>Telemetrie an/aus</button>
+  <button id="home" disabled>Home</button>
+  <span id="status">nicht verbunden</span>
+</div>
+<p class="legend">
+  <span style="background: var(--line)"></span>Strom (30 s)
+  <span style="background: var(--limit)"></span>Dauerstrom-Grenze
+  <span style="background: var(--heat); height: 6px"></span>I²t-Wärmekonto (voll = Drosselung)
+</p>
+<p class="hint">
+  <b>Test „Überhitzung simulieren“:</b> Motor muss auf „Torque AUS“ gehen und auch bei ← / → aus bleiben.
+  Bei Schulter, Ellbogen und Hand-Neigung sackt das Gelenk dann ab — Arm festhalten.
+  <b>„Re-Enable-Test“:</b> zeigt, ob ein Positionsbefehl einen abgeschalteten Motor wieder einschaltet (Ist-Position, keine Bewegung).
+</p>
+
+<div class="grid" id="servos"></div>
+
+<details open>
+  <summary>Log (Schutz-Meldungen, Befehle)</summary>
+  <div id="log"></div>
+</details>
+
+<script>
+const NAMES = ["S1 Basis", "S2 Schulter", "S3 Ellbogen", "S4 Hand-Neigung", "S5 Hand-Rotation", "S6 Greifer"];
+const STALL_CURRENT = [300, 350, 350, 250, 200, 250];  // = main.cpp
+const TEMP_CRIT_C = 60;                                 // = main.cpp
+const SERVO_MAX_TEMP_C = 65;                            // = main.cpp (Reg 13)
+const MA_PER_LSB = 6.5;
+const WINDOW_MS = 30000;
+const JOG = 150;                                        // Schritt für ← / →
+const STATE = [["ok", ""], ["Stall-Warnung", "warn"], ["I²t gedrosselt", "hot"], ["MOTOR AUS", "bad"]];
+const ERR_BITS = [[0x04, "Temp"], [0x08, "Strom"], [0x20, "Überlast"]];
+
+const history = NAMES.map(() => []);    // pro Servo: [{t, i}]
+const ui = [];
+
+NAMES.forEach((name, k) => {
+  const n = k + 1;
+  const el = document.createElement("div");
+  el.className = "servo";
+  el.innerHTML = `
+    <header><h2>${name}</h2><div class="badges">
+      <span class="badge trq">–</span><span class="badge state">–</span><span class="badge err" hidden></span>
+    </div></header>
+    <div class="stats">
+      <div class="stat"><div class="k">Strom</div><div class="v"><span class="i">–</span> <small>mA</small></div>
+        <div class="k">Spitze 5 s: <span class="pk">–</span> mA</div></div>
+      <div class="stat"><div class="k">Temperatur</div><div class="v"><span class="t">–</span> <small>°C</small></div>
+        <div class="meter"><div class="tm"></div></div></div>
+      <div class="stat"><div class="k">Wärmekonto</div><div class="v"><span class="h">–</span> <small>%</small></div>
+        <div class="meter"><div class="hm" style="background: var(--heat)"></div></div></div>
+    </div>
+    <canvas></canvas>
+    <div class="controls">
+      <button data-cmd="M ${n} -${JOG}">←</button>
+      <button data-cmd="M ${n} +${JOG}">→</button>
+      <button class="sim" data-cmd="X ${n}">Überhitzung simulieren</button>
+      <button data-cmd="R ${n}">Re-Enable-Test</button>
+    </div>
+    <div class="rtest"></div>`;
+  document.getElementById("servos").appendChild(el);
+  el.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => send(b.dataset.cmd));
+  const q = s => el.querySelector(s);
+  ui.push({ el, trq: q(".trq"), state: q(".state"), err: q(".err"), i: q(".i"), pk: q(".pk"),
+            t: q(".t"), tm: q(".tm"), h: q(".h"), hm: q(".hm"), canvas: q("canvas"),
+            sim: q(".sim"), rtest: q(".rtest") });
+});
+
+function tempColor(t) {
+  if (t >= TEMP_CRIT_C) return "var(--limit)";
+  if (t >= TEMP_CRIT_C - 10) return "var(--heat)";
+  return "var(--ok)";
+}
+
+function handleTelemetry(parts) {
+  const t = Number(parts[1]);
+  for (let k = 0; k < 6; k++) {
+    const [i, temp, heat, state, err, trq] = parts.slice(2 + k * 6, 8 + k * 6).map(Number);
+    const h = history[k];
+    h.push({ t, i });
+    while (h.length && h[0].t < t - WINDOW_MS) h.shift();
+    const peak = Math.max(...h.filter(p => p.t >= t - 5000).map(p => p.i));
+    const u = ui[k];
+    u.i.textContent = Math.round(i * MA_PER_LSB);
+    u.pk.textContent = Math.round(peak * MA_PER_LSB);
+    u.t.textContent = temp;
+    u.t.style.color = temp >= TEMP_CRIT_C - 10 ? tempColor(temp) : "";
+    u.tm.style.width = Math.min(100, temp / SERVO_MAX_TEMP_C * 100) + "%";
+    u.tm.style.background = tempColor(temp);
+    u.h.textContent = Math.round(heat / 10);
+    u.hm.style.width = Math.min(100, heat / 10) + "%";
+    u.trq.textContent = trq ? "Torque AN" : "Torque AUS";
+    u.trq.className = "badge trq" + (trq ? " on" : state === 3 ? " bad" : "");
+    const [label, cls] = STATE[state] ?? [String(state), ""];
+    u.state.textContent = label;
+    u.state.className = "badge state " + cls;
+    u.err.hidden = !err;
+    u.err.textContent = "Servo: " + (ERR_BITS.filter(([b]) => err & b).map(([, n]) => n).join(", ") || err);
+    u.err.className = "badge err bad";
+    u.el.classList.toggle("off", state === 3);
+  }
+}
+
+function draw() {
+  const css = getComputedStyle(document.documentElement);
+  const col = name => css.getPropertyValue(name).trim();
+  history.forEach((h, k) => {
+    const c = ui[k].canvas;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, hgt = c.clientHeight;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(hgt * dpr); }
+    const g = c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, hgt);
+    if (!h.length) return;
+
+    // y-Achse: mindestens bis 1,5× Dauerstrom-Grenze, damit sie immer sichtbar ist
+    const yMax = Math.max(STALL_CURRENT[k] * 1.5, ...h.map(p => p.i)) * 1.05;
+    const tEnd = h[h.length - 1].t;
+    const x = t => w - (tEnd - t) / WINDOW_MS * w;
+    const y = v => hgt - v / yMax * hgt;
+
+    g.strokeStyle = col("--grid"); g.lineWidth = 1;
+    for (let s = 5000; s < WINDOW_MS; s += 5000) {
+      g.beginPath(); g.moveTo(x(tEnd - s), 0); g.lineTo(x(tEnd - s), hgt); g.stroke();
+    }
+    g.strokeStyle = col("--limit"); g.setLineDash([4, 3]);
+    g.beginPath(); g.moveTo(0, y(STALL_CURRENT[k])); g.lineTo(w, y(STALL_CURRENT[k])); g.stroke();
+    g.setLineDash([]);
+
+    g.strokeStyle = col("--line"); g.lineWidth = 1.5;
+    g.beginPath();
+    h.forEach((p, n) => n ? g.lineTo(x(p.t), y(p.i)) : g.moveTo(x(p.t), y(p.i)));
+    g.stroke();
+
+    g.fillStyle = col("--muted"); g.font = "11px system-ui";
+    g.fillText(Math.round(yMax * MA_PER_LSB) + " mA", 4, 12);
+    g.fillText("−30 s", 4, hgt - 4);
+  });
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ── Serial ──────────────────────────────────────────────────────────────────
+let port = null, writer = null;
+
+async function connect() {
+  if (!("serial" in navigator)) {
+    alert("Web Serial wird nicht unterstützt. Bitte Chrome oder Edge verwenden.");
+    return;
+  }
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  writer = port.writable.getWriter();
+  document.getElementById("status").textContent = "verbunden";
+  document.getElementById("toggle").disabled = false;
+  document.getElementById("home").disabled = false;
+  readLoop();
+  send("T");
+}
+
+async function send(command) {
+  if (!writer) return;
+  log("> " + command);
+  await writer.write(new TextEncoder().encode(command + "\n"));
+}
+
+async function readLoop() {
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) handleLine(line.trim());
+  }
+}
+
+function handleLine(line) {
+  if (!line) return;
+  const parts = line.split(" ");
+  if (parts[0] === "TEL" && parts.length >= 38) return handleTelemetry(parts);
+  if (parts[0] === "SIMHOT") ui[parts[1] - 1]?.sim.classList.toggle("active", parts[2] === "ON");
+  if (parts[0] === "RTEST") {
+    const [, a, before, after] = parts.map(Number);
+    ui[a - 1].rtest.textContent = before === 0 && after === 1
+      ? `Re-Enable-Test: Torque war AUS → nach Positionsbefehl AN. Ein Positionsbefehl schaltet den Motor wieder ein.`
+      : `Re-Enable-Test: vorher ${before}, nachher ${after}.`;
+  }
+  if (parts[0] === "TELEMETRY") document.getElementById("status").textContent = "verbunden · Telemetrie " + parts[1];
+  log(line);
+}
+
+function log(text) {
+  const el = document.getElementById("log");
+  el.textContent += `${new Date().toLocaleTimeString()}  ${text}\n`;
+  const lines = el.textContent.split("\n");
+  if (lines.length > 300) el.textContent = lines.slice(-300).join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+
+document.getElementById("connect").onclick = connect;
+document.getElementById("toggle").onclick = () => send("T");
+document.getElementById("home").onclick = () => send("H");
+</script>
+</body>
+</html>
