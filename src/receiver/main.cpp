@@ -14,13 +14,17 @@
 #define SERVO_DEADBAND 3
 
 // ─── Überlastschutz (strombasiert) ─────────────────────────────────────────────
-// Primärschutz: pro Servo ein Hardware-Drehmoment-Limit (TORQUE_LIMIT[]). Das
-// deckelt die PWM → deckelt den Strom → begrenzt die stationäre Temperatur. Auf
-// die gewünschte Maximalkraft gesetzt kann der Motor dauerhaft „zupacken", ohne
-// durchzubrennen. Sekundärschicht: strombasierte Stall-Erkennung, die ein Gelenk
-// nur *sanft einfriert* (Ziel = Ist-Position), wenn es lange sinnlos gegen einen
-// Block drückt (Warnung, langsames rotes Blinken). Übertemperatur schaltet den
-// Motor aus und blinkt schnell rot.
+// Drei Schichten pro Servo:
+//  1. Hardware-Drehmoment-Limit (TORQUE_LIMIT[]) deckelt die PWM → Spitzenstrom.
+//     Allein reicht das NICHT: 80–90 % PWM im Stillstand verheizen den Motor.
+//  2. I²t-Wärmemodell: integriert (I/I_dauer)² über die Zeit. Kurze Spitzen sind
+//     erlaubt, anhaltende oder wiederholte Überlast füllt das Wärmekonto. Ist es
+//     voll, wird das Drehmoment-Limit auf HOLD_TORQUE_LIMIT gesenkt (Gelenk hält
+//     noch, drückt aber nicht mehr) — erst nach Abkühlung des Kontos wieder voll.
+//  3. Übertemperatur (Sensor) schaltet den Motor ganz aus. Solange er aus ist,
+//     bekommt er KEINE Positionsbefehle mehr (ein Goal-Position-Write würde das
+//     Drehmoment sonst wieder einschalten) und Torque-AUS wird wiederholt.
+// LED: langsam rot = Stall-Warnung, mittel = I²t-gedrosselt, schnell = Motor aus.
 
 // Hardware-Drehmoment-Limit pro Servo (0..1000). = maximale „Zupack"-Kraft, die
 // zugleich dauerhaft thermisch sicher ist. Schulter/Ellbogen brauchen mehr als
@@ -41,10 +45,50 @@ static const int STALL_POS_TOL[6] = { 20, 20, 20, 20, 20, 20 };
 #define STALL_DURATION_MS         1500  // durchgehender Stall bis zur Force-Warnung (~1–2 s)
 #define STARTUP_IGNORE_MS         800   // Einschaltstrom nach Boot ignorieren
 #define PROTECT_POLL_INTERVAL_MS  20    // Round-Robin-Schritt (1 Servo/Tick → Runde ≈ 120 ms)
-#define TEMP_CRIT_C               70    // °C — zu warm: Motor ausschalten
-#define TEMP_RESET_C              55    // °C — Hysterese: wieder einschalten unter diesem Wert
+// Der Temperatursensor sitzt auf der Servo-Platine, nicht in der Wicklung — er
+// hinkt hinterher. Deshalb deutlich unter dem Feetech-Default von 70 °C.
+#define TEMP_CRIT_C               60    // °C — zu warm: Motor ausschalten
+#define TEMP_RESET_C              50    // °C — Hysterese: wieder einschalten unter diesem Wert
 #define FORCE_BLINK_INTERVAL_MS   800   // langsames rotes Blinken bei Force-Überlast (Warnung)
+#define THERMAL_BLINK_INTERVAL_MS 400   // mittleres rotes Blinken: I²t-gedrosselt
 #define OVERTEMP_BLINK_INTERVAL_MS 150  // schnelles rotes Blinken bei Übertemperatur
+
+// I²t-Wärmemodell. Dauerstrom pro Servo = STALL_CURRENT[] (darunter kühlt das
+// Konto ab). heat += ((I/I_dauer)² − 1)·dt beim Heizen, beim Abkühlen nur mit
+// HEAT_COOL_RATE (Wicklung kühlt langsamer als sie heizt). Auslösezeit bei
+// doppeltem Dauerstrom: HEAT_LIMIT_S / 3 ≈ 1,3 s; bei 1,5×: ≈ 3,2 s.
+#define HEAT_LIMIT_S              4.0f  // Konto voll → drosseln
+#define HEAT_RELEASE_S            1.0f  // darunter wieder volles Drehmoment
+#define HEAT_COOL_RATE            0.25f // Abkühlgeschwindigkeit relativ zum Heizen
+#define HOLD_TORQUE_LIMIT         250   // gedrosseltes Drehmoment-Limit (0..1000)
+#define TELEMETRY_INTERVAL_MS     100   // "TEL"-Zeilen für robot-monitor.html (Befehl "T")
+
+// ─── Eingebauter Servo-Schutz (EEPROM, STS3215 12 V) ───────────────────────────
+// Der Servo kann sich selbst schützen — unabhängig von Polling und Funk. Mit den
+// Werkswerten greift das aber praktisch nie: Schutzstrom 3,25 A liegt über dem
+// Blockierstrom (2,7 A), und die Überlastschwelle 80 % wird mit unserem
+// Drehmoment-Limit (≤ 90 %) kaum erreicht. Quelle: Feetech ST3215 Memory Table
+// V3.7; Werte orientiert an LeRobot (SO-100) und Waveshare RoArm-M2.
+// Wird beim Boot gelesen und NUR bei Abweichung geschrieben (EEPROM-Verschleiß).
+#define REG_MAX_TEMP          13   // °C — Servo entlastet sich selbst darüber
+#define REG_UNLOAD_COND       19   // Bitmaske: welche Fehler das Drehmoment abschalten
+#define REG_P_COEF            21   // Positionsregler P
+#define REG_PROT_CURRENT_L    28   // Schutzstrom, 6,5 mA/LSB
+#define REG_PROT_TORQUE       34   // % — Drehmoment nach Überlast-Auslösung
+#define REG_PROT_TIME         35   // 10 ms — Überlast-Dauer bis Auslösung
+#define REG_OVERLOAD_TORQUE   36   // % — Last-Schwelle, ab der die Schutzzeit läuft
+#define REG_OVERCUR_TIME      38   // 10 ms — Überstrom-Dauer bis Auslösung
+#define REG_SERVO_STATUS      65   // Fehler-Bits, gleiche Belegung wie REG_UNLOAD_COND
+
+#define UNLOAD_REQUIRED   0b101100 // Bit 2 Temperatur, Bit 3 Strom, Bit 5 Überlast
+
+#define SERVO_MAX_TEMP_C      65   // Hardware-Backup knapp über TEMP_CRIT_C
+#define SERVO_P_COEF          16   // Default 32; 16 = weniger Zittern/Wärme beim Halten
+#define SERVO_PROT_CURRENT   300   // ≈ 1,95 A (Blockierstrom 12 V ≈ 2,7 A)
+#define SERVO_PROT_TORQUE     20   // % — Werkswert
+#define SERVO_PROT_TIME       80   // 0,8 s (Default 2 s)
+#define SERVO_OVERLOAD_TORQUE 45   // % — muss unter TORQUE_LIMIT[] liegen, sonst greift es nie
+#define SERVO_OVERCUR_TIME   100   // 1 s (Default 2 s)
 
 // ─── Monitoring (Serial-Plotter) ───────────────────────────────────────────────
 // Wird nur mit dem Build-Flag -D ROBOLINK_MONITOR aktiviert. Dann wird für ALLE
@@ -124,7 +168,18 @@ int lastSentPos[6];
 static unsigned long stallStartMs[6]   = {0};     // Beginn des laufenden Stalls (0 = keiner)
 static bool          forceStalled[6]   = {false};  // drückt anhaltend gegen Block → rote Warnung
 static bool          servoTorqueOff[6] = {false};  // Motor per Übertemp abgeschaltet
+static float         heatS[6]          = {0};      // I²t-Wärmekonto (Sekunden-Äquivalent)
+static bool          thermalLimited[6] = {false};  // Drehmoment auf HOLD_TORQUE_LIMIT gedrosselt
+static unsigned long lastSampleMs[6]   = {0};      // Zeitpunkt der letzten Messung (für dt)
+static int           lastCurrent[6]    = {0};      // letzte Messwerte, für Telemetrie
+static int           lastTemp[6]       = {0};
+static int           lastPos[6]        = {0};
+static int           lastStatus[6]     = {0};      // REG_SERVO_STATUS (0 = kein Fehler)
 static unsigned long lastProtectPollMs = 0;
+static int           lastTorqueOn[6]   = {0};      // SMS_STS_TORQUE_ENABLE, wie vom Servo gelesen
+static bool          simHot[6]         = {false};  // Test: Übertemperatur simulieren (Befehl "X")
+static bool          telemetryOn       = false;
+static unsigned long lastTelemetryMs   = 0;
 static unsigned long lastBlinkMs       = 0;
 static uint8_t       pollCursor        = 0;
 #ifdef ROBOLINK_MONITOR
@@ -154,6 +209,10 @@ static void driveServos(const uint16_t values[6]) {
         int pos = map((int)values[i], 0, 4095,
                       LIMITS[i].minPos, LIMITS[i].maxPos);
         pos = constrain(pos, LIMITS[i].minPos, LIMITS[i].maxPos);
+
+        // Abgeschalteter Motor bekommt kein Ziel: ein Goal-Position-Write würde
+        // das Drehmoment wieder einschalten und die Abschaltung aushebeln.
+        if (servoTorqueOff[i]) continue;
 
         if (abs(pos - lastSentPos[i]) >= SERVO_DEADBAND) {
             ids[count]       = SERVO_IDS[i];
@@ -190,6 +249,10 @@ void onFrame(uint8_t /*receiverID*/, const uint16_t values[6]) {
 //   A <w1> <w2> ... <w6>   alle Achsen absolut    z.B. "A 2048 2048 2048 2048 2048 2048"
 //   H                      Home (alle Achsen auf 2048 = Mitte)
 //   ?                      nur aktuelle Werte abfragen
+//   T                      Telemetrie an/aus ("TEL ..."-Zeilen, siehe sendTelemetry)
+//   X <achse>              Test: Übertemperatur simulieren an/aus (echter Abschaltpfad)
+//   R <achse>              Test: Torque aus → Ist-Position schreiben → schaltet das
+//                          den Motor wieder ein? Antwort "RTEST <achse> <vorher> <nachher>"
 //
 // Antwort auf jeden gültigen Befehl:  "POS <w1> <w2> <w3> <w4> <w5> <w6>"
 // Bei Fehlern:                        "ERR <grund>"
@@ -232,8 +295,33 @@ static void handleSerialCommand(char* line) {
         }
     } else if (cmd == 'H') {
         for (int i = 0; i < 6; i++) next[i] = 2048;
+    } else if (cmd == 'T') {
+        telemetryOn = !telemetryOn;
+        Serial.printf("TELEMETRY %s\n", telemetryOn ? "ON" : "OFF");
+        return;
+    } else if (cmd == 'X' || cmd == 'R') {
+        long axis = strtol(args, nullptr, 10);
+        if (axis < 1 || axis > 6) { Serial.println("ERR achse 1-6"); return; }
+        int i = axis - 1;
+        if (cmd == 'X') {
+            simHot[i] = !simHot[i];
+            Serial.printf("SIMHOT %ld %s\n", axis, simHot[i] ? "ON" : "OFF");
+            return;
+        }
+        // Ist-Position als Ziel → keine Bewegung, nur das Register-Verhalten.
+        int pos = servos.ReadPos(SERVO_IDS[i]);
+        servos.EnableTorque(SERVO_IDS[i], 0);
+        delay(20);
+        int before = servos.readByte(SERVO_IDS[i], SMS_STS_TORQUE_ENABLE);
+        servos.WritePosEx(SERVO_IDS[i], pos, 0, SERVO_ACC);
+        delay(20);
+        int after = servos.readByte(SERVO_IDS[i], SMS_STS_TORQUE_ENABLE);
+        if (servoTorqueOff[i]) servos.EnableTorque(SERVO_IDS[i], 0);  // Schutz-Zustand wiederherstellen
+        else                   servos.EnableTorque(SERVO_IDS[i], 1);
+        Serial.printf("RTEST %ld %d %d\n", axis, before, after);
+        return;
     } else if (cmd != '?') {
-        Serial.println("ERR unbekannter befehl (M, P, A, H, ?)");
+        Serial.println("ERR unbekannter befehl (M, P, A, H, T, X, R, ?)");
         return;
     }
 
@@ -261,6 +349,39 @@ static void pollSerial() {
         } else {
             overflow = true;
         }
+    }
+}
+
+// ─── Eingebauten Servo-Schutz konfigurieren ────────────────────────────────────
+
+// Schreibt ein EEPROM-Register nur, wenn es abweicht. Liefert true bei Änderung.
+static bool ensureEeprom(uint8_t id, uint8_t reg, int value, bool isWord) {
+    int cur = isWord ? servos.readWord(id, reg) : servos.readByte(id, reg);
+    if (cur == -1 || cur == value) return false;
+    servos.unLockEprom(id);
+    if (isWord) servos.writeWord(id, reg, (u16)value);
+    else        servos.writeByte(id, reg, (u8)value);
+    servos.LockEprom(id);
+    Serial.printf("    Reg %d: %d → %d\n", reg, cur, value);
+    return true;
+}
+
+static void configureServoProtection() {
+    Serial.println("[Receiver] Servo-Schutz (EEPROM):");
+    for (int i = 0; i < 6; i++) {
+        uint8_t id = SERVO_IDS[i];
+        Serial.printf("  S%d:\n", i + 1);
+        int unload = servos.readByte(id, REG_UNLOAD_COND);
+        if (unload == -1) { Serial.println("    nicht erreichbar — übersprungen"); continue; }
+        bool changed = ensureEeprom(id, REG_UNLOAD_COND, unload | UNLOAD_REQUIRED, false);
+        changed |= ensureEeprom(id, REG_MAX_TEMP,        SERVO_MAX_TEMP_C,      false);
+        changed |= ensureEeprom(id, REG_P_COEF,          SERVO_P_COEF,          false);
+        changed |= ensureEeprom(id, REG_PROT_CURRENT_L,  SERVO_PROT_CURRENT,    true);
+        changed |= ensureEeprom(id, REG_PROT_TORQUE,     SERVO_PROT_TORQUE,     false);
+        changed |= ensureEeprom(id, REG_PROT_TIME,       SERVO_PROT_TIME,       false);
+        changed |= ensureEeprom(id, REG_OVERLOAD_TORQUE, SERVO_OVERLOAD_TORQUE, false);
+        changed |= ensureEeprom(id, REG_OVERCUR_TIME,    SERVO_OVERCUR_TIME,    false);
+        if (!changed) Serial.println("    ok (unverändert)");
     }
 }
 
@@ -299,8 +420,9 @@ void setup() {
         }
     }
 
-    // Primärschutz: Hardware-Drehmoment-Limit pro Servo. Deckelt PWM → Strom →
-    // stationäre Temperatur. = maximale „Zupack"-Kraft, dauerhaft thermisch sicher.
+    configureServoProtection();
+
+    // Hardware-Drehmoment-Limit pro Servo. Deckelt PWM → Spitzenstrom.
     Serial.println("[Receiver] Drehmoment-Limits (Kraft-Deckel):");
     for (int i = 0; i < 6; i++) {
         servos.writeWord(SERVO_IDS[i], SMS_STS_TORQUE_LIMIT_L, TORQUE_LIMIT[i]);
@@ -314,7 +436,7 @@ void setup() {
     } else {
         Serial.printf("[Receiver] ESP-NOW ready — Mode %d\n", robotLink.getMode());
     }
-    Serial.println("[Receiver] Serial-Befehle: M <achse> <delta> | P <achse> <wert> | A <w1..w6> | H | ?");
+    Serial.println("[Receiver] Serial-Befehle: M <achse> <delta> | P <achse> <wert> | A <w1..w6> | H | T | X <achse> | R <achse> | ?");
     printAxisValues();
 }
 
@@ -330,10 +452,65 @@ static void handleTemp(int idx, int temp) {
         servoTorqueOff[idx] = true;
         Serial.printf("[S%d] ZU WARM %d°C — Motor AUS\n", idx + 1, temp);
     } else if (servoTorqueOff[idx] && temp <= TEMP_RESET_C) {
+        // Ziel = Ist-Position, damit der Motor beim Einschalten nicht ruckartig
+        // auf ein altes Ziel springt. Der nächste Frame fährt dann normal weiter.
+        servos.WritePosEx(SERVO_IDS[idx], lastPos[idx], 0, SERVO_ACC);
         servos.EnableTorque(SERVO_IDS[idx], 1);
+        lastSentPos[idx] = -9999;    // nächsten Frame sicher senden
+        heatS[idx] = 0;
         servoTorqueOff[idx] = false;
         Serial.printf("[S%d] auf %d°C abgekühlt — Motor wieder AN\n", idx + 1, temp);
+    } else if (servoTorqueOff[idx]) {
+        servos.EnableTorque(SERVO_IDS[idx], 0);  // wiederholen: hält sicher aus
     }
+}
+
+// I²t-Wärmemodell: Konto füllt sich, solange der Strom über dem Dauerstrom
+// (STALL_CURRENT) liegt, und leert sich langsam darunter. Konto voll → Drehmoment-
+// Limit auf HOLD_TORQUE_LIMIT drosseln. Fängt sowohl einen langen Stall als auch
+// viele kurze Überlast-Spitzen ab, die sich über die Zeit aufsummieren.
+static void updateHeat(int idx, int current, unsigned long now) {
+    float dt = (lastSampleMs[idx] == 0) ? 0.0f : (now - lastSampleMs[idx]) / 1000.0f;
+    lastSampleMs[idx] = now;
+    if (dt > 0.5f) dt = 0.5f;    // nach Lesefehlern nicht riesig springen
+
+    float r = (float)current / STALL_CURRENT[idx];
+    float d = r * r - 1.0f;
+    heatS[idx] += (d > 0 ? d : d * HEAT_COOL_RATE) * dt;
+    if (heatS[idx] < 0) heatS[idx] = 0;
+
+    if (!thermalLimited[idx] && heatS[idx] >= HEAT_LIMIT_S) {
+        servos.writeWord(SERVO_IDS[idx], SMS_STS_TORQUE_LIMIT_L, HOLD_TORQUE_LIMIT);
+        thermalLimited[idx] = true;
+        Serial.printf("[S%d] I²t-Überlast (I=%d) — Drehmoment gedrosselt auf %d\n",
+                      idx + 1, current, HOLD_TORQUE_LIMIT);
+    } else if (thermalLimited[idx] && heatS[idx] <= HEAT_RELEASE_S) {
+        servos.writeWord(SERVO_IDS[idx], SMS_STS_TORQUE_LIMIT_L, TORQUE_LIMIT[idx]);
+        thermalLimited[idx] = false;
+        Serial.printf("[S%d] I²t abgekühlt — volles Drehmoment\n", idx + 1);
+    }
+}
+
+// Eine Zeile pro Intervall aus den zuletzt gemessenen Werten (kein Bus-Verkehr):
+//   TEL <ms> <I1> <T1> <heat‰1> <state1> <err1> <trq1> ... <I6> ... <trq6>
+// I = |ReadCurrent| (Roh-LSB, ~6,5 mA), T = °C, heat‰ = Wärmekonto in ‰ von
+// HEAT_LIMIT_S, state: 0 ok, 1 Stall-Warnung, 2 I²t-gedrosselt, 3 Motor aus,
+// err = REG_SERVO_STATUS (Bit 2 Temp, Bit 3 Strom, Bit 5 Überlast — vom Servo selbst),
+// trq = Torque-Enable-Register, wie es der Servo meldet (1 = Motor bestromt).
+static void sendTelemetry() {
+    if (!telemetryOn) return;
+    unsigned long now = millis();
+    if (now - lastTelemetryMs < TELEMETRY_INTERVAL_MS) return;
+    lastTelemetryMs = now;
+
+    Serial.printf("TEL %lu", now);
+    for (int i = 0; i < 6; i++) {
+        int state = servoTorqueOff[i] ? 3 : thermalLimited[i] ? 2 : forceStalled[i] ? 1 : 0;
+        Serial.printf(" %d %d %d %d %d %d", lastCurrent[i], lastTemp[i],
+                      (int)(heatS[i] * 1000.0f / HEAT_LIMIT_S), state, lastStatus[i],
+                      lastTorqueOn[i]);
+    }
+    Serial.println();
 }
 
 #ifdef ROBOLINK_MONITOR
@@ -419,21 +596,41 @@ static void pollProtection() {
         int speed     = servos.ReadSpeed(-1);
         int current   = abs(servos.ReadCurrent(-1));
         int temp      = servos.ReadTemper(-1);
+        lastCurrent[idx] = current;
+        lastTemp[idx]    = temp;
+        lastPos[idx]     = actualPos;
+
+        // Eigener Fehlerstatus des Servos (z.B. Überlast-Schutz ausgelöst).
+        int status = servos.readByte(SERVO_IDS[idx], REG_SERVO_STATUS);
+        if (status != -1 && status != lastStatus[idx]) {
+            Serial.printf("[S%d] Servo-Status 0x%02X%s%s%s\n", idx + 1, status,
+                          (status & 0x04) ? " TEMP" : "", (status & 0x08) ? " STROM" : "",
+                          (status & 0x20) ? " ÜBERLAST" : "");
+            lastStatus[idx] = status;
+        }
+        int torqueOn = servos.readByte(SERVO_IDS[idx], SMS_STS_TORQUE_ENABLE);
+        if (torqueOn != -1) lastTorqueOn[idx] = torqueOn;
 
         // Einschaltstrom nach Boot ignorieren (sonst Fehlauslösung).
-        if (now >= STARTUP_IGNORE_MS) detectStall(idx, current, actualPos, speed, now);
-        handleTemp(idx, temp);
+        if (now >= STARTUP_IGNORE_MS) {
+            detectStall(idx, current, actualPos, speed, now);
+            updateHeat(idx, current, now);
+        }
+        handleTemp(idx, simHot[idx] ? 99 : temp);
     }
 
-    // Rotes Blinken als Warnung. Übertemperatur (Motor aus) hat Vorrang und
-    // blinkt DEUTLICH SCHNELLER; Force-Überlast blinkt langsam.
-    bool overtemp = false, forceWarn = false;
+    // Rotes Blinken: je ernster, desto schneller. Motor aus > I²t-gedrosselt >
+    // Stall-Warnung.
+    bool overtemp = false, thermal = false, forceWarn = false;
     for (int i = 0; i < 6; i++) {
-        if (servoTorqueOff[i]) overtemp = true;
+        if (servoTorqueOff[i]) overtemp  = true;
+        if (thermalLimited[i]) thermal   = true;
         if (forceStalled[i])   forceWarn = true;
     }
-    unsigned long interval = overtemp ? OVERTEMP_BLINK_INTERVAL_MS : FORCE_BLINK_INTERVAL_MS;
-    if ((overtemp || forceWarn) && (now - lastBlinkMs) >= interval) {
+    unsigned long interval = overtemp ? OVERTEMP_BLINK_INTERVAL_MS
+                           : thermal  ? THERMAL_BLINK_INTERVAL_MS
+                           :            FORCE_BLINK_INTERVAL_MS;
+    if ((overtemp || thermal || forceWarn) && (now - lastBlinkMs) >= interval) {
         lastBlinkMs = now;
         robotLink.flashAttention(CRGB(200, 0, 0), overtemp ? 80 : 150);  // rot
     }
@@ -445,6 +642,7 @@ void loop() {
     robotLink.update();  // no delay — process frames as fast as the bus allows
     pollSerial();        // Textbefehle über USB-Serial (siehe "Serial-Steuerung")
     pollProtection();
+    sendTelemetry();     // nur nach Befehl "T": Live-Daten für robot-monitor.html
 #ifdef ROBOLINK_MONITOR
     pollMonitor();       // nur mit -D ROBOLINK_MONITOR: Temp+Force aller Servos plotten
 #endif
